@@ -1,13 +1,19 @@
 """
-voice-to-form  —  src/gui/tab_geometry.py  v0.1.0
+voice-to-form  —  src/gui/tab_geometry.py  v0.2.0
 
 Geometry tab: length, min/max radius, n_theta, nx, smoothing sigmas.
 Also hosts the 3D preview viewport so parameter sweeps are visible in
 real time.
+
+v0.2.0:
+  - Listens to AppState.appearance_changed and updates the preview
+    colour and background live (no mesh rebuild).
+  - Applies the configured background on mesh load so the very first
+    preview already shows the artist's chosen scene.
 """
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 import sys
 from typing import Optional
@@ -20,6 +26,7 @@ from PyQt6.QtWidgets import (
 
 from .state import AppState
 from ..preview import PreviewWidget
+from ..config import BACKGROUND_PRESETS_RGB
 
 print(f"[voice-to-form] tab_geometry.py v{__version__}", file=sys.stderr)
 
@@ -35,6 +42,11 @@ class GeometryTab(QWidget):
         self._build_ui()
 
         state.mesh_changed.connect(self._on_mesh)
+        state.appearance_changed.connect(self._on_appearance_changed)
+
+        # Apply the initial background so the empty viewport already
+        # reflects the configured studio.
+        self._apply_background()
 
     def _build_ui(self):
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -169,11 +181,21 @@ class GeometryTab(QWidget):
             self.state.recompute_envelopes()
 
     def _on_mesh(self, mesh):
-        self.preview.set_mesh(
-            mesh,
-            color_hex=self.state.config.appearance.color_hex,
-        )
+        a = self.state.config.appearance
+        self.preview.set_mesh(mesh, color_hex=a.color_hex,
+                              roughness=a.roughness, metalness=a.metalness)
+        self._apply_background()
         self.stats_label.setText(
             f"mesh:  {mesh.triangle_count():,} triangles   ·   "
             f"{mesh.vertex_count():,} vertices"
         )
+
+    def _on_appearance_changed(self):
+        a = self.state.config.appearance
+        self.preview.set_color(a.color_hex)
+        self._apply_background()
+
+    def _apply_background(self):
+        name = self.state.config.appearance.background
+        hex_str = BACKGROUND_PRESETS_RGB.get(name, "#2e3236")
+        self.preview.set_background(hex_str)

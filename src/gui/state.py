@@ -1,13 +1,18 @@
 """
-voice-to-form  —  src/gui/state.py  v0.1.0
+voice-to-form  —  src/gui/state.py  v0.2.0
 
 Shared application state for the GUI tabs.  Holds the current source
 WAV, decoded audio, envelopes, mesh, and the working FormConfig.
 Emits Qt signals when anything downstream needs to recompute.
+
+v0.2.0 adds the `appearance_changed` signal so the Appearance tab can
+trigger a live colour/background update in the Geometry tab's preview
+without rebuilding the mesh.  Also accepts in-memory audio (from the
+GUI Recorder) in addition to file paths.
 """
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 import sys
 from pathlib import Path
@@ -29,6 +34,7 @@ class AppState(QObject):
     mesh_changed = pyqtSignal(object)        # Mesh
     config_changed = pyqtSignal(object)      # FormConfig
     overlay_reviewed_changed = pyqtSignal(bool)
+    appearance_changed = pyqtSignal()        # cheap signal — live render redraw
 
     def __init__(self):
         super().__init__()

@@ -1,7 +1,11 @@
 """
-voice-to-form  —  src/audio.py  v0.1.0
+voice-to-form  —  src/audio.py  v0.2.0
 
 Audio I/O and envelope extraction for the shared-spine elliptical sweep.
+
+v0.2.0 — adds the open-ended `Recorder` (press-to-start / press-to-stop),
+`list_input_devices()` for the GUI's device picker, and per-channel
+selection for multi-channel interfaces.
 
 The envelope-extraction algorithm here is load-bearing.  See README
 "Why the diagnostic overlay exists" for the history.  Do not change
@@ -23,7 +27,7 @@ overshoots and the form stops looking like the audio.
 """
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 import sys
 from dataclasses import dataclass
@@ -187,8 +191,157 @@ def _resample_to(arr: np.ndarray, n: int) -> np.ndarray:
 
 
 # --------------------------------------------------------------------------
-# Mic recording (optional — used by tab_input "Record" button)
+# Mic recording — device enumeration + open-ended Recorder
 # --------------------------------------------------------------------------
+
+@dataclass
+class InputDevice:
+    index: int
+    name: str
+    max_channels: int
+    default_samplerate: int
+
+    def label(self) -> str:
+        return f"{self.name}  ({self.max_channels} ch · {self.default_samplerate} Hz)"
+
+
+def list_input_devices() -> list[InputDevice]:
+    """Enumerate audio input devices.  Used by the Input tab's picker.
+
+    Returns devices in the same order as sounddevice's internal list,
+    keeping their `index` so it can be passed straight back to
+    `sounddevice.InputStream(device=...)`.
+    """
+    import sounddevice as sd
+    out: list[InputDevice] = []
+    try:
+        devices = sd.query_devices()
+    except Exception as e:
+        print(f"[voice-to-form] could not list audio devices: {e!r}", file=sys.stderr)
+        return out
+    for i, d in enumerate(devices):
+        if int(d.get("max_input_channels", 0)) > 0:
+            out.append(InputDevice(
+                index=i,
+                name=str(d.get("name", f"device #{i}")),
+                max_channels=int(d["max_input_channels"]),
+                default_samplerate=int(d.get("default_samplerate", 44100) or 44100),
+            ))
+    return out
+
+
+def default_input_device_index() -> Optional[int]:
+    """Returns the system default input device index, or None on failure."""
+    import sounddevice as sd
+    try:
+        d = sd.default.device
+        # sd.default.device is (input, output) tuple; -1 means "not set".
+        idx = d[0] if isinstance(d, (list, tuple)) else d
+        return int(idx) if idx is not None and idx != -1 else None
+    except Exception:
+        return None
+
+
+class Recorder:
+    """Open-ended press-to-start / press-to-stop mic recorder.
+
+    Usage:
+
+        r = Recorder(sr=22050, device_index=None, channel=0)
+        r.start()
+        ...           # user presses again when done
+        audio = r.stop()                  # 1-D float32, the chosen channel
+        sf.write("out.wav", audio, 22050)
+
+    The `device_index` is a sounddevice device index (None = system default).
+    `channel` is 0-indexed within that device's input channels.  We open
+    the stream with enough channels to cover the requested one and slice
+    afterwards — that keeps `Recorder.stop()` clean even on multi-channel
+    interfaces.
+    """
+
+    def __init__(
+        self,
+        sr: int = 22050,
+        device_index: Optional[int] = None,
+        channel: int = 0,
+    ):
+        self.sr = int(sr)
+        self.device_index = device_index
+        self.channel = max(0, int(channel))
+        self._frames: list[np.ndarray] = []
+        self._stream = None
+        self._opened_channels = 1
+
+    # ------------------------------------------------------------------
+
+    @property
+    def is_recording(self) -> bool:
+        return self._stream is not None
+
+    def start(self) -> None:
+        import sounddevice as sd
+        if self._stream is not None:
+            return  # idempotent
+
+        # Open with channels = channel+1 so we can slice the user's pick
+        # out of the buffer.  If the device says it only has fewer
+        # channels than requested, clamp.
+        wanted = self.channel + 1
+        try:
+            if self.device_index is not None:
+                info = sd.query_devices(self.device_index, "input")
+                max_ch = int(info.get("max_input_channels", wanted))
+                wanted = min(wanted, max_ch)
+                self._opened_channels = wanted
+                self.channel = min(self.channel, wanted - 1)
+        except Exception:
+            self._opened_channels = wanted
+
+        self._frames = []
+
+        def _callback(indata, frames, time_info, status):  # noqa: ARG001
+            if status:
+                print(f"[voice-to-form] audio status: {status}", file=sys.stderr)
+            self._frames.append(indata.copy())
+
+        self._stream = sd.InputStream(
+            samplerate=self.sr,
+            device=self.device_index,
+            channels=self._opened_channels,
+            dtype="float32",
+            callback=_callback,
+        )
+        self._stream.start()
+
+    def stop(self) -> np.ndarray:
+        """Stop the stream and return the recorded 1-D float32 mono signal."""
+        if self._stream is None:
+            return np.zeros(0, dtype=np.float32)
+        try:
+            self._stream.stop()
+        finally:
+            self._stream.close()
+            self._stream = None
+
+        if not self._frames:
+            return np.zeros(0, dtype=np.float32)
+
+        data = np.concatenate(self._frames, axis=0)
+        if data.ndim == 2:
+            ch = min(self.channel, data.shape[1] - 1)
+            data = data[:, ch]
+        return data.astype(np.float32, copy=False)
+
+    def cancel(self) -> None:
+        if self._stream is not None:
+            try:
+                self._stream.stop()
+            finally:
+                self._stream.close()
+                self._stream = None
+        self._frames = []
+
 
 def record_to_wav(
     out_path: str | Path,
@@ -196,7 +349,10 @@ def record_to_wav(
     sr: int = 22050,
     channels: int = 1,
 ) -> Path:
-    """Blocking microphone capture.  Returns the path written."""
+    """Blocking fixed-duration capture — used by the headless CLI only.
+
+    The GUI uses `Recorder` so the user can press-to-start / press-to-stop.
+    """
     import sounddevice as sd
     import soundfile as sf
 
@@ -207,6 +363,15 @@ def record_to_wav(
     sd.wait()
     if channels > 1:
         audio = audio.mean(axis=1)
+    sf.write(str(out_path), audio, sr, subtype="PCM_16")
+    return out_path
+
+
+def write_wav(out_path: str | Path, audio: np.ndarray, sr: int) -> Path:
+    """Save a 1-D float32 buffer as 16-bit PCM WAV."""
+    import soundfile as sf
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     sf.write(str(out_path), audio, sr, subtype="PCM_16")
     return out_path
 

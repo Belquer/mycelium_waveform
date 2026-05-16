@@ -1,12 +1,13 @@
 """
-voice-to-form  —  src/gui/main_window.py  v0.1.0
+voice-to-form  —  src/gui/main_window.py  v0.2.0
 
 Five-tab QMainWindow.  Owns the AppState and threads signals between
-tabs.  Library view (grid of past forms) is a v0.2 placeholder.
+tabs.  Library view (grid of past forms) is a v0.3 roadmap item — v0.2
+ships the plain list view.
 """
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 import sys
 from pathlib import Path
@@ -89,7 +90,7 @@ class MainWindow(QMainWindow):
     def _about(self):
         QMessageBox.information(
             self, "voice-to-form",
-            "voice-to-form v0.1.0\n"
+            f"voice-to-form v{__version__}\n"
             "Shared-spine elliptical sweep — voice recordings → 3D-printable forms.\n\n"
             "See README.md for the diagnostic overlay rationale and profile guide.",
         )

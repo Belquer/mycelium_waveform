@@ -4,7 +4,8 @@ A macOS desktop app that turns short voice recordings into 3D-printable
 sculptural objects.  Single-user tool for one artist's sculptural
 practice (the mycelium-waveform project).
 
-Version: **v0.1.0** — MVP + scaffolding.
+Version: **v0.2.0** — single-click launcher, open-ended recording, audio
+device + channel selection, live appearance preview.
 
 > _Every source file prints its own version on import, so the boot log
 > shows exactly which build is running. See "Versioning" at the
@@ -53,20 +54,25 @@ automatically and prints a warning.
 
 ---
 
-## Hello world (record 2 s → STL → preview)
+## Hello world (record → STL → preview)
 
-```bash
-source .venv/bin/activate
-python main.py
-```
+**Double-click `voice-to-form.command`.**  First run installs the venv
+and requirements (one-time, 2–5 min).  Every run after that just opens
+the app.
 
 In the GUI:
 
-1. **Input** tab → `● Record` (3 s default) or `Load WAV…`
+1. **Input** tab → pick your **Input device** (e.g. your audio
+   interface) and **Channel**, then click **● Record**.  Press
+   **■ Stop** when you're done — recording is open-ended, no fixed
+   duration.  (Or `Load WAV…` to use an existing file.)
 2. **Geometry** tab → see the 3D preview update live as you tune
-   length / min-r / max-r
-3. **Verify** tab → check the three-stack overlay; tick "Reviewed"
-4. **Export** tab → pick `FDM Plastic` → `Save to library + Export`
+   length / min-r / max-r.  Form is centred against a mid-tone
+   background so you can actually see it on first launch.
+3. **Appearance** tab → colour / palette / background.  Changes show
+   live in the Geometry-tab preview — no need to switch tabs to verify.
+4. **Verify** tab → check the three-stack overlay; tick "Reviewed".
+5. **Export** tab → pick `FDM Plastic` → `Save to library + Export`.
 
 A new entry appears in `library/<date>_<title>/` containing
 `source.wav`, `config.yaml`, `preview.png`, and
@@ -75,15 +81,15 @@ A new entry appears in `library/<date>_<title>/` containing
 ### Headless / CI
 
 ```bash
+source .venv/bin/activate
 python main.py --cli examples/multitudes.wav out/ --profile FDM_PLASTIC
 ```
 
-### Double-click launchers
+### One-button launcher
 
-- **`run.command`** — venv-activates, launches the GUI.
-- **`setup.command`** — first-time venv creation and pip install.
-
-Both keep the Terminal window open on error so you can read the trace.
+- **`voice-to-form.command`** (double-click).  On first run it
+  creates the `.venv`, installs requirements, then launches.  Every
+  subsequent run just launches.  Terminal stays open on error.
 
 ---
 
@@ -255,22 +261,27 @@ Covers:
 ## Versioning
 
 Per the project rules: every source file carries a semantic version
-and prints it on import.  Files in v0.1.0:
+and prints it on import.  Current file versions:
 
 ```
-main.py                 v0.1.0
-src/audio.py            v0.1.0
-src/geometry.py         v0.1.0
-src/profiles.py         v0.1.0
-src/export.py           v0.1.0
-src/decimation.py       v0.1.0
-src/overlay.py          v0.1.0
-src/config.py           v0.1.0
-src/library.py          v0.1.0
-src/preview.py          v0.1.0
-src/gui/state.py        v0.1.0
-src/gui/main_window.py  v0.1.0
-src/gui/tab_*.py        v0.1.0  (5 tabs)
+main.py                       v0.2.0   (--version banner)
+src/audio.py                  v0.2.0   (Recorder, list_input_devices)
+src/geometry.py               v0.1.0
+src/profiles.py               v0.1.0
+src/export.py                 v0.1.0
+src/decimation.py             v0.1.0
+src/overlay.py                v0.1.0
+src/config.py                 v0.2.0   (input_device/channel, defaults)
+src/library.py                v0.1.0
+src/preview.py                v0.2.0   (set_color/set_background live)
+src/gui/state.py              v0.2.0   (appearance_changed signal)
+src/gui/main_window.py        v0.2.0
+src/gui/tab_input.py          v0.2.0   (toggle record + device picker)
+src/gui/tab_geometry.py       v0.2.0   (live appearance updates)
+src/gui/tab_appearance.py     v0.2.0   (emits appearance_changed)
+src/gui/tab_verify.py         v0.1.0
+src/gui/tab_export.py         v0.1.0
+voice-to-form.command         v0.2.0   (combined setup+run)
 ```
 
 Bumps:
@@ -283,9 +294,23 @@ Run `python main.py --version` to print every module's banner.
 
 ---
 
-## What's next (v0.2+)
+## v0.2.0 → v0.3 roadmap
+
+Already shipped in **v0.2.0**:
+
+- One-click launcher (`voice-to-form.command`) — setup + run combined
+- Open-ended press-to-start / press-to-stop recording (no fixed
+  duration)
+- Audio input device + channel selection for multi-input interfaces
+- Live appearance preview (colour/background updates instantly)
+- Brighter default mesh colour + mid-dark viewport background so the
+  first preview is visible without picking a colour
+
+Coming in **v0.3+**:
 
 - PBR procedural normal maps for the appearance bump-pattern dropdown
+  (the slider state is already saved in config — only the renderer
+  needs to catch up)
 - Mycelium-colonisation simulation in preview (procedural noise growth
   with adjustable coverage %)
 - Library thumbnail grid

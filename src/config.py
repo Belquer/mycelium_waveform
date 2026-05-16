@@ -1,7 +1,12 @@
 """
-voice-to-form  —  src/config.py  v0.1.0
+voice-to-form  —  src/config.py  v0.2.0
 
 YAML persistence for per-form configs and the global app settings.
+
+v0.2.0 — adds input-device + input-channel fields to AudioParams (for
+multi-input audio interfaces) and changes the default appearance colour
+to a brushed-aluminum mid-tone so the preview is visible against the
+dark viewport without picking a colour first.
 
 Per-form config sits inside library/<entry>/config.yaml and records
 everything needed to reproduce the form from its source WAV.  Global
@@ -10,7 +15,7 @@ settings (recent palette, last-used profile, window pos) live in
 """
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 import os
 import sys
@@ -33,6 +38,24 @@ GLOBAL_SETTINGS_PATH = APP_DIR / "settings.yaml"
 # --------------------------------------------------------------------------
 # Per-form config
 # --------------------------------------------------------------------------
+
+# Background preset name → viewport clear-colour hex.  The Appearance
+# tab's "Background" dropdown shows these names; the preview reads the
+# hex.  v0.2 keeps it simple (solid colours).  Gradient + HDR env-map
+# support stays on the v0.3 roadmap.
+BACKGROUND_PRESETS_RGB: dict[str, str] = {
+    "studio_dark":      "#2e3236",
+    "studio_white":     "#e7e9ec",
+    "black_void":       "#000000",
+    "warm_gallery":     "#3b332b",
+    "cool_studio":      "#1f242a",
+    "mycology_lab":     "#3a4238",
+    "dark_wood_plinth": "#2a201a",
+    "dining_table":     "#5b4632",
+    "sky":              "#7b9bba",
+    "cocoon":           "#473226",
+}
+
 
 DEFAULT_PALETTE = [
     {"name": "matte black",        "hex": "#1a1a1a"},
@@ -60,16 +83,25 @@ class AudioParams:
     digital_jitter_sigma: float = 0.4
     length_smooth_sigma: float = 0.6
     gamma: float = 1.0
+    # Input device for mic recording.  None = system default.  Integer
+    # is a sounddevice device index from list_input_devices().
+    input_device_index: Optional[int] = None
+    # 0-indexed channel within the chosen device.
+    input_channel: int = 0
 
 
 @dataclass
 class AppearanceParams:
-    color_hex: str = "#1a1a1a"
+    # Default to a mid-tone "brushed aluminum" so the form is visible
+    # against the dark viewport before the artist picks a colour.  The
+    # original matte-black default rendered as black-on-black.
+    color_hex: str = "#a8acb1"
     roughness: float = 0.7
     metalness: float = 0.0
     bump_intensity: float = 0.0
     bump_pattern: str = "smooth"
-    background: str = "studio_white"
+    # "studio_dark" is a mid-dark neutral that flatters most colours.
+    background: str = "studio_dark"
     light_temp_k: int = 5200
     light_rig_rotation_deg: float = 0.0
     raking_light: bool = False
@@ -89,7 +121,7 @@ class FormConfig:
     appearance: AppearanceParams = field(default_factory=AppearanceParams)
     last_profile_key: str = "FDM_PLASTIC"
     reviewed_overlay: bool = False
-    voice_to_form_version: str = "0.1.0"
+    voice_to_form_version: str = "0.2.0"
 
     def geometry_params(self) -> GeometryParams:
         return GeometryParams(

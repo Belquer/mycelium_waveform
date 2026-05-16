@@ -1,22 +1,17 @@
 """
-voice-to-form  —  src/gui/tab_appearance.py  v0.1.0
+voice-to-form  —  src/gui/tab_appearance.py  v0.2.0
 
 Appearance tab (preview-only — does NOT affect exported geometry).
 
-v0.1 implements:
-  - Diffuse colour picker + hex entry + saved palette
-  - Background colour
-  - Persistence of roughness / metalness / bump intensity / bump pattern
-    sliders so artists can record intent — but the preview shader only
-    uses diffuse + a Phong-style highlight in this version.
-
-PBR procedural normal maps for the bump_pattern dropdown
-(sandblasted / brushed / woven / mycelium-colonized) are planned for
-v0.2.
+v0.2.0:
+  - Every change emits AppState.appearance_changed so the Geometry-tab
+    viewport updates live as the artist tunes colour / background.
+  - Default colour is now a brushed-aluminum mid-tone (was matte
+    black, which rendered as black-on-black against the dark viewport).
 """
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 import sys
 
@@ -28,7 +23,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .state import AppState
-from ..config import DEFAULT_PALETTE
+from ..config import DEFAULT_PALETTE, BACKGROUND_PRESETS_RGB
 
 print(f"[voice-to-form] tab_appearance.py v{__version__}", file=sys.stderr)
 
@@ -36,11 +31,6 @@ print(f"[voice-to-form] tab_appearance.py v{__version__}", file=sys.stderr)
 BUMP_PATTERNS = [
     "smooth", "sandblasted", "beadblasted", "brushed",
     "layered (FDM)", "porous (SLS)", "woven (carbon)", "mycelium-colonized",
-]
-BACKGROUND_PRESETS = [
-    "studio_white", "black_void", "warm_gallery", "cool_studio",
-    "mycology_lab", "dark_wood_plinth", "dining_table",
-    "sky", "cocoon",
 ]
 
 
@@ -82,7 +72,7 @@ class AppearanceTab(QWidget):
             grid.addWidget(btn, i // 4, i % 4)
         root.addWidget(pal_group)
 
-        # ---- PBR sliders (recorded, not yet rendered in v0.1)
+        # ---- PBR sliders (recorded; only colour + bg actually render in v0.2)
         pbr_group = QGroupBox("Surface (preview, not exported)")
         form = QFormLayout(pbr_group)
         self.roughness = self._slider(self.state.config.appearance.roughness, 0.0, 1.0)
@@ -97,7 +87,7 @@ class AppearanceTab(QWidget):
         self.pattern_combo.setCurrentText(self.state.config.appearance.bump_pattern)
         self.pattern_combo.currentTextChanged.connect(self._pattern_changed)
         form.addRow("Bump pattern", self.pattern_combo)
-        form.addRow(QLabel("<i>Bump patterns are recorded in config but not yet rendered in v0.1.</i>"))
+        form.addRow(QLabel("<i>Roughness / metalness / bump patterns saved to config; full PBR in v0.3.</i>"))
 
         root.addWidget(pbr_group)
 
@@ -105,8 +95,9 @@ class AppearanceTab(QWidget):
         bg_group = QGroupBox("Background")
         bg = QHBoxLayout(bg_group)
         self.bg_combo = QComboBox()
-        self.bg_combo.addItems(BACKGROUND_PRESETS)
-        self.bg_combo.setCurrentText(self.state.config.appearance.background)
+        self.bg_combo.addItems(list(BACKGROUND_PRESETS_RGB.keys()))
+        if self.state.config.appearance.background in BACKGROUND_PRESETS_RGB:
+            self.bg_combo.setCurrentText(self.state.config.appearance.background)
         self.bg_combo.currentTextChanged.connect(self._bg_changed)
         bg.addWidget(self.bg_combo)
         bg.addStretch()
@@ -130,6 +121,7 @@ class AppearanceTab(QWidget):
         a.roughness = self.roughness.value() / 100.0
         a.metalness = self.metalness.value() / 100.0
         a.bump_intensity = self.bump.value() / 100.0
+        self.state.appearance_changed.emit()
 
     def _pick_color(self):
         c = QColorDialog.getColor(QColor(self.state.config.appearance.color_hex), self)
@@ -147,6 +139,7 @@ class AppearanceTab(QWidget):
         self.state.config.appearance.color_hex = hex_str
         self.hex_edit.setText(hex_str)
         self._sync_swatch()
+        self.state.appearance_changed.emit()
 
     def _sync_swatch(self):
         h = self.state.config.appearance.color_hex
@@ -154,9 +147,13 @@ class AppearanceTab(QWidget):
 
     def _pattern_changed(self, text: str):
         self.state.config.appearance.bump_pattern = text
+        # Pattern doesn't affect render in v0.2 but emit anyway so any
+        # listener that does pattern preview later picks it up.
+        self.state.appearance_changed.emit()
 
     def _bg_changed(self, text: str):
         self.state.config.appearance.background = text
+        self.state.appearance_changed.emit()
 
 
 def _is_dark(hex_str: str) -> bool:
