@@ -4,8 +4,9 @@ A macOS desktop app that turns short voice recordings into 3D-printable
 sculptural objects.  Single-user tool for one artist's sculptural
 practice (the mycelium-waveform project).
 
-Version: **v0.7.0** — design presets (built-in + user-saved); tab
-order is now Input → Verify → Design → Export.
+Version: **v0.7.2** — design presets (built-in + user-saved);
+Input → Verify → Design → Export; macOS Core-profile shader fix
+(meshes now render reliably on Apple Silicon).
 
 > _Every source file prints its own version on import, so the boot log
 > shows exactly which build is running. See "Versioning" at the
@@ -279,7 +280,8 @@ Per the project rules: every source file carries a semantic version
 and prints it on import.  Current file versions:
 
 ```
-main.py                       v0.6.0   (--version banner)
+main.py                       v0.7.2   (--version banner)
+src/__init__.py               v0.7.2   (package version → window title)
 src/audio.py                  v0.4.0   (Player, list_output_devices)
 src/geometry.py               v0.3.0   (cross_section_aspect)
 src/profiles.py               v0.1.0
@@ -288,19 +290,22 @@ src/decimation.py             v0.1.0
 src/overlay.py                v0.1.0
 src/config.py                 v0.5.0   (trim_silence_enabled default OFF)
 src/library.py                v0.1.0
-src/preview.py                v0.6.0   (custom GLSL shader, set_pbr)
+src/presets.py                v0.7.0   (NEW: design presets + YAML I/O)
+src/preview.py                v0.7.1   (modern GLSL attrs/uniforms;
+                                        custom PBR shader works on
+                                        macOS Core profile)
 src/gui/state.py              v0.5.0   (load_source honours trim toggle)
-src/gui/main_window.py        v0.3.0   (4-tab layout, Design combined)
-src/gui/tab_input.py          v0.5.0   (2-column layout, trim toggle,
-                                        mono-channel disable fix)
-src/gui/tab_geometry.py       v0.6.0   (editable aspect, wired PBR)
-src/gui/tab_verify.py         v0.1.0
-src/gui/tab_export.py         v0.1.0
+src/gui/main_window.py        v0.7.0   (Input → Verify → Design → Export)
+src/gui/tab_input.py          v0.7.2   (2-column layout, trim toggle,
+                                        playback, Menlo font fix)
+src/gui/tab_geometry.py       v0.7.0   (Design tab + Presets group)
+src/gui/tab_verify.py         v0.7.2   (Menlo font fix)
+src/gui/tab_export.py         v0.7.2   (Menlo font fix)
 voice-to-form.command         v0.2.0   (combined setup+run)
 ```
 
-`src/gui/tab_appearance.py` is removed in v0.3.0; its controls live in
-the Design tab now.
+`src/gui/tab_appearance.py` was removed in v0.3.0; its controls
+live in the Design tab now.
 
 Bumps:
 
@@ -313,6 +318,24 @@ Run `python main.py --version` to print every module's banner.
 ---
 
 ## Version history
+
+**v0.7.2:**
+
+- Silenced Qt's "missing font family Ui-monospace" warning by
+  replacing the CSS-only `ui-monospace` keyword with real macOS
+  font families: `Menlo, Monaco, monospace`.
+
+**v0.7.1:**
+
+- **Fix invisible mesh on macOS.**  The v0.6.0 custom shader used
+  legacy compat-profile GLSL builtins (`gl_Vertex`,
+  `gl_NormalMatrix`, `gl_ModelViewMatrix`, `ftransform`,
+  `gl_Color`, `gl_FrontColor`).  Apple Silicon's default Core
+  profile silently dropped them — the shader linked but rendered
+  invisible.  Rewrote against pyqtgraph's modern attribute /
+  uniform pattern (`a_position` / `a_normal` / `a_color`,
+  `u_mvp` / `u_normal`, view-space lighting).  Mesh now renders
+  reliably under the custom PBR shader.
 
 **v0.7.0:**
 
