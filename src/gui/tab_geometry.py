@@ -1,7 +1,13 @@
 """
-voice-to-form  —  src/gui/tab_geometry.py  v0.6.2
+voice-to-form  —  src/gui/tab_geometry.py  v0.7.0
 
 Design tab — geometry + appearance combined.
+
+v0.7.0 — design presets.  Named bundles of geometry + appearance +
+audio-smoothing settings.  Built-ins ship with the app (polished
+bronze, raw PLA, carbon fibre, mycelium cocoon, etc.); user presets
+persist to ``~/.voice_to_form/presets.yaml`` and can be saved /
+replaced / deleted from the Preset group at the top of the panel.
 
 v0.6.2 — placeholder mesh so the viewport isn't blank on startup.  A
 synthetic tapered-bell form (asymmetric top/bottom) is generated from
@@ -26,7 +32,7 @@ v0.6.0:
 """
 from __future__ import annotations
 
-__version__ = "0.6.2"
+__version__ = "0.7.0"
 
 import sys
 
@@ -36,11 +42,14 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QDoubleSpinBox, QSpinBox,
     QGroupBox, QFormLayout, QSplitter, QScrollArea, QPushButton, QLineEdit,
     QColorDialog, QSlider, QComboBox, QGridLayout, QSizePolicy,
+    QInputDialog, QMessageBox,
 )
 
 from .state import AppState
 from ..preview import PreviewWidget
 from ..config import BACKGROUND_PRESETS_RGB, DEFAULT_PALETTE
+from .. import presets as presets_mod
+from ..presets import Preset, CUSTOM_LABEL
 
 print(f"[voice-to-form] tab_geometry.py v{__version__}", file=sys.stderr)
 
@@ -101,6 +110,7 @@ class DesignTab(QWidget):
         ctl = QVBoxLayout(controls)
         ctl.setContentsMargins(8, 8, 8, 8)
 
+        ctl.addWidget(self._presets_group())
         ctl.addWidget(self._dimensions_group())
         ctl.addWidget(self._shape_group())
         ctl.addWidget(self._surface_group())
@@ -137,6 +147,38 @@ class DesignTab(QWidget):
     # ------------------------------------------------------------------
     # Group builders
     # ------------------------------------------------------------------
+
+    def _presets_group(self) -> QGroupBox:
+        g = QGroupBox("Preset")
+        outer = QVBoxLayout(g)
+
+        self.preset_combo = QComboBox()
+        self.preset_combo.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                        QSizePolicy.Policy.Preferred)
+        self.preset_combo.currentTextChanged.connect(self._preset_selected)
+        outer.addWidget(self.preset_combo)
+
+        row = QHBoxLayout()
+        self.save_preset_btn = QPushButton("Save as…")
+        self.save_preset_btn.setToolTip(
+            "Save the current geometry + surface + background settings "
+            "as a named preset."
+        )
+        self.save_preset_btn.clicked.connect(self._save_preset_clicked)
+        row.addWidget(self.save_preset_btn)
+
+        self.delete_preset_btn = QPushButton("Delete")
+        self.delete_preset_btn.setToolTip(
+            "Delete the selected user preset.  Built-ins can't be deleted."
+        )
+        self.delete_preset_btn.clicked.connect(self._delete_preset_clicked)
+        row.addWidget(self.delete_preset_btn)
+        row.addStretch()
+        outer.addLayout(row)
+
+        # Populate dropdown.  Done last so handlers don't fire during init.
+        self._refresh_preset_list(initial=True)
+        return g
 
     def _dimensions_group(self) -> QGroupBox:
         g = QGroupBox("Dimensions")
@@ -343,6 +385,208 @@ class DesignTab(QWidget):
         for w in (self.hop_box, self.jitter_box, self.length_smooth_box, self.gamma_box):
             w.valueChanged.connect(self._queue_geometry)
         return g
+
+    # ------------------------------------------------------------------
+    # Presets — save / apply / delete
+    # ------------------------------------------------------------------
+
+    def _refresh_preset_list(self, *, initial: bool = False, select: str | None = None):
+        self.preset_combo.blockSignals(True)
+        self.preset_combo.clear()
+        self.preset_combo.addItem(CUSTOM_LABEL, userData=None)
+        for p in presets_mod.all_presets():
+            self.preset_combo.addItem(p.name, userData=p.name)
+        # Pick selection.
+        target_index = 0
+        if select is not None:
+            for i in range(self.preset_combo.count()):
+                if self.preset_combo.itemData(i) == select:
+                    target_index = i
+                    break
+        self.preset_combo.setCurrentIndex(target_index)
+        self.preset_combo.blockSignals(False)
+        if not initial and select is not None and target_index != 0:
+            # Apply the selected preset since we just set it programmatically.
+            chosen = self._lookup_preset(select)
+            if chosen is not None:
+                self._apply_preset(chosen)
+
+    def _preset_selected(self, name: str):
+        if not name or name == CUSTOM_LABEL:
+            return
+        chosen = self._lookup_preset(name)
+        if chosen is None:
+            return
+        self._apply_preset(chosen)
+
+    def _lookup_preset(self, name: str) -> Preset | None:
+        for p in presets_mod.all_presets():
+            if p.name == name:
+                return p
+        return None
+
+    def _save_preset_clicked(self):
+        suggested = self.preset_combo.currentText()
+        if suggested == CUSTOM_LABEL:
+            suggested = ""
+        name, ok = QInputDialog.getText(
+            self, "Save preset", "Preset name:",
+            text=suggested,
+        )
+        if not ok:
+            return
+        name = name.strip()
+        if not name:
+            return
+        if name == CUSTOM_LABEL:
+            QMessageBox.warning(self, "Reserved name",
+                                f"'{CUSTOM_LABEL}' is reserved.  Pick a different name.")
+            return
+        if presets_mod.is_builtin(name):
+            QMessageBox.warning(
+                self, "Built-in name",
+                f"'{name}' is a built-in preset name.  Pick something else "
+                "to keep the built-in around.",
+            )
+            return
+        if presets_mod.user_has(name):
+            resp = QMessageBox.question(
+                self, "Replace preset",
+                f"A preset called '{name}' already exists. Replace it?",
+            )
+            if resp != QMessageBox.StandardButton.Yes:
+                return
+        preset = self._current_as_preset(name)
+        presets_mod.save_or_replace(preset)
+        self._refresh_preset_list(initial=True, select=name)
+        # Restore selection to the new preset (initial=True suppresses
+        # auto-apply since we just saved from the current state).
+        self.preset_combo.blockSignals(True)
+        for i in range(self.preset_combo.count()):
+            if self.preset_combo.itemData(i) == name:
+                self.preset_combo.setCurrentIndex(i)
+                break
+        self.preset_combo.blockSignals(False)
+
+    def _delete_preset_clicked(self):
+        name = self.preset_combo.currentData()
+        if not name:
+            return
+        if presets_mod.is_builtin(name) and not presets_mod.user_has(name):
+            QMessageBox.information(
+                self, "Built-in preset",
+                f"'{name}' is a built-in preset and can't be deleted.",
+            )
+            return
+        resp = QMessageBox.question(
+            self, "Delete preset", f"Delete preset '{name}'?",
+        )
+        if resp != QMessageBox.StandardButton.Yes:
+            return
+        presets_mod.delete_user_preset(name)
+        self._refresh_preset_list(initial=True)
+
+    def _current_as_preset(self, name: str) -> Preset:
+        cfg = self.state.config
+        return Preset(
+            name=name,
+            length_mm=cfg.geometry_length_mm,
+            min_r_mm=cfg.geometry_min_r_mm,
+            max_r_mm=cfg.geometry_max_r_mm,
+            n_theta=cfg.geometry_n_theta,
+            nx=cfg.geometry_nx,
+            cross_section_aspect=cfg.geometry_cross_section_aspect,
+            hop_ms=cfg.audio.hop_ms,
+            digital_jitter_sigma=cfg.audio.digital_jitter_sigma,
+            length_smooth_sigma=cfg.audio.length_smooth_sigma,
+            gamma=cfg.audio.gamma,
+            color_hex=cfg.appearance.color_hex,
+            roughness=cfg.appearance.roughness,
+            metalness=cfg.appearance.metalness,
+            bump_intensity=cfg.appearance.bump_intensity,
+            bump_pattern=cfg.appearance.bump_pattern,
+            background=cfg.appearance.background,
+            viewport_bg_hex=cfg.viewport_bg_hex,
+        )
+
+    def _apply_preset(self, preset: Preset):
+        """Copy preset values into config, sync every UI control, and
+        push the new look to the preview."""
+        cfg = self.state.config
+        cfg.geometry_length_mm = preset.length_mm
+        cfg.geometry_min_r_mm = preset.min_r_mm
+        cfg.geometry_max_r_mm = preset.max_r_mm
+        cfg.geometry_n_theta = preset.n_theta
+        cfg.geometry_nx = preset.nx
+        cfg.geometry_cross_section_aspect = preset.cross_section_aspect
+        cfg.audio.hop_ms = preset.hop_ms
+        cfg.audio.digital_jitter_sigma = preset.digital_jitter_sigma
+        cfg.audio.length_smooth_sigma = preset.length_smooth_sigma
+        cfg.audio.gamma = preset.gamma
+        cfg.appearance.color_hex = preset.color_hex
+        cfg.appearance.roughness = preset.roughness
+        cfg.appearance.metalness = preset.metalness
+        cfg.appearance.bump_intensity = preset.bump_intensity
+        cfg.appearance.bump_pattern = preset.bump_pattern
+        cfg.appearance.background = preset.background
+        cfg.viewport_bg_hex = preset.viewport_bg_hex
+
+        # Sync UI without re-triggering handlers.
+        def _set(ctl, value):
+            ctl.blockSignals(True)
+            ctl.setValue(value)
+            ctl.blockSignals(False)
+
+        _set(self.length_box, preset.length_mm)
+        _set(self.min_r_box, preset.min_r_mm)
+        _set(self.max_r_box, preset.max_r_mm)
+        _set(self.n_theta_box, preset.n_theta)
+        _set(self.nx_box, preset.nx)
+        _set(self.hop_box, preset.hop_ms)
+        _set(self.jitter_box, preset.digital_jitter_sigma)
+        _set(self.length_smooth_box, preset.length_smooth_sigma)
+        _set(self.gamma_box, preset.gamma)
+        _set(self.aspect_slider, int(round(preset.cross_section_aspect * 100)))
+        _set(self.aspect_spin, preset.cross_section_aspect)
+        _set(self.roughness, int(round(preset.roughness * 100)))
+        _set(self.metalness, int(round(preset.metalness * 100)))
+        _set(self.bump, int(round(preset.bump_intensity * 100)))
+        _set(self.bg_brightness, 50)
+
+        self.pattern_combo.blockSignals(True)
+        self.pattern_combo.setCurrentText(preset.bump_pattern)
+        self.pattern_combo.blockSignals(False)
+
+        self.hex_edit.blockSignals(True)
+        self.hex_edit.setText(preset.color_hex)
+        self.hex_edit.blockSignals(False)
+        self._sync_color_swatch()
+
+        self.bg_combo.blockSignals(True)
+        if preset.background in BACKGROUND_PRESETS_RGB:
+            self.bg_combo.setCurrentText(preset.background)
+        self.bg_combo.blockSignals(False)
+
+        self.bg_hex_edit.blockSignals(True)
+        self.bg_hex_edit.setText(self._current_bg_hex())
+        self.bg_hex_edit.blockSignals(False)
+        self._sync_bg_swatch()
+
+        # Push to preview.
+        self.preview.set_color(preset.color_hex)
+        self.preview.set_pbr(
+            roughness=preset.roughness,
+            metalness=preset.metalness,
+            bump_intensity=preset.bump_intensity,
+            bump_pattern=preset.bump_pattern,
+        )
+        self._apply_background()
+
+        # Rebuild the form.
+        if self.state.audio is not None:
+            self.state.recompute_envelopes()
+        else:
+            self._show_placeholder()
 
     # ------------------------------------------------------------------
     # Placeholder mesh — shown before any audio is loaded

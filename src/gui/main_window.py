@@ -1,21 +1,19 @@
 """
-voice-to-form  —  src/gui/main_window.py  v0.6.1
+voice-to-form  —  src/gui/main_window.py  v0.7.0
 
-Four-tab QMainWindow (plus Library): Input → Design → Verify → Export.
-Geometry and Appearance are combined into a single Design tab so the
-artist isn't shuttling between tabs to compare a parameter change
-against the colour/finish.
+Four-tab QMainWindow (plus Library): Input → Verify → Design → Export.
 
-Window title now sources from the package's top-level __version__
-so it tracks the released app version rather than this module's
-local version.
+v0.7.0 — reordered to put Verify before Design.  The diagnostic
+overlay confirms the form's envelopes match the audio before the
+artist starts shaping; only then does Design become useful.  The
+Library tab still trails the workflow tabs.
 
-Library view (thumbnail grid) is on the roadmap; v0.6 keeps the
-plain list view.
+Window title sources from the package's top-level __version__ so it
+tracks the released app version rather than this module's local one.
 """
 from __future__ import annotations
 
-__version__ = "0.6.1"
+__version__ = "0.7.0"
 
 import sys
 from pathlib import Path
@@ -61,8 +59,8 @@ class MainWindow(QMainWindow):
         self.tab_library = LibraryTab(self._on_library_open)
 
         self.tabs.addTab(self.tab_input, "1 · Input")
-        self.tabs.addTab(self.tab_design, "2 · Design")
-        self.tabs.addTab(self.tab_verify, "3 · Verify")
+        self.tabs.addTab(self.tab_verify, "2 · Verify")
+        self.tabs.addTab(self.tab_design, "3 · Design")
         self.tabs.addTab(self.tab_export, "4 · Export")
         self.tabs.addTab(self.tab_library, "Library")
         self.setCentralWidget(self.tabs)

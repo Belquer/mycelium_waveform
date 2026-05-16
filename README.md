@@ -4,9 +4,8 @@ A macOS desktop app that turns short voice recordings into 3D-printable
 sculptural objects.  Single-user tool for one artist's sculptural
 practice (the mycelium-waveform project).
 
-Version: **v0.6.0** — custom GLSL shader: surface sliders
-(roughness / metalness / bump / pattern) actually render, base
-colour is visible across the form, aspect is editable.
+Version: **v0.7.0** — design presets (built-in + user-saved); tab
+order is now Input → Verify → Design → Export.
 
 > _Every source file prints its own version on import, so the boot log
 > shows exactly which build is running. See "Versioning" at the
@@ -314,6 +313,21 @@ Run `python main.py --version` to print every module's banner.
 ---
 
 ## Version history
+
+**v0.7.0:**
+
+- **Design presets.**  Named bundles of geometry + appearance +
+  audio-smoothing parameters.  Pick from the dropdown at the top
+  of the Design tab to apply.  Eight built-ins ship with the app
+  (default, polished bronze, raw PLA sculpture, carbon fiber,
+  bead-blasted aluminum, mycelium cocoon, terracotta ember,
+  brushed titanium).  Save your own with **Save as…** — user
+  presets persist to `~/.voice_to_form/presets.yaml`.  Built-ins
+  can't be deleted; user presets can.  Picking a preset auto-
+  applies it and re-renders the form (or the placeholder, if no
+  audio is loaded yet).
+- **Tab order:** Input → Verify → Design → Export.  Verify the
+  diagnostic overlay matches the audio before shaping.
 
 **v0.6.0:**
 
