@@ -1,18 +1,20 @@
 """
-voice-to-form  —  src/gui/state.py  v0.2.0
+voice-to-form  —  src/gui/state.py  v0.5.0
 
 Shared application state for the GUI tabs.  Holds the current source
 WAV, decoded audio, envelopes, mesh, and the working FormConfig.
 Emits Qt signals when anything downstream needs to recompute.
 
-v0.2.0 adds the `appearance_changed` signal so the Appearance tab can
-trigger a live colour/background update in the Geometry tab's preview
-without rebuilding the mesh.  Also accepts in-memory audio (from the
-GUI Recorder) in addition to file paths.
+v0.5.0 — `load_source` honours the new `trim_silence_enabled` flag so
+the form's tapered ends mirror the audio's natural fade-in/out.
+
+v0.2.0 added the `appearance_changed` signal so the Appearance tab
+can trigger a live colour/background update in the Geometry tab's
+preview without rebuilding the mesh.
 """
 from __future__ import annotations
 
-__version__ = "0.2.0"
+__version__ = "0.5.0"
 
 import sys
 from pathlib import Path
@@ -50,7 +52,8 @@ class AppState(QObject):
     def load_source(self, path: Path) -> None:
         self.source_wav = Path(path)
         y, sr = load_wav(path, target_sr=self.config.audio.target_sr)
-        y = trim_silence(y, sr, top_db=self.config.audio.trim_top_db)
+        if self.config.audio.trim_silence_enabled:
+            y = trim_silence(y, sr, top_db=self.config.audio.trim_top_db)
         self.audio = y
         self.sample_rate = sr
         self.audio_loaded.emit(y)

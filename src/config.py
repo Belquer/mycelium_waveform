@@ -1,7 +1,12 @@
 """
-voice-to-form  —  src/config.py  v0.4.0
+voice-to-form  —  src/config.py  v0.5.0
 
 YAML persistence for per-form configs and the global app settings.
+
+v0.5.0 — `trim_silence_enabled` is now a stored AudioParams field
+that defaults to OFF.  Earlier versions silently trimmed leading and
+trailing silence, which cut the form's tapered ends off audio that
+naturally faded in/out.  Toggle in the Input tab.
 
 v0.4.0 — default viewport background is now `studio_white` (gallery
 look).  The studio_white preset itself is brightened to a true
@@ -23,7 +28,7 @@ settings (recent palette, last-used profile, window pos) live in
 """
 from __future__ import annotations
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 import os
 import sys
@@ -90,6 +95,10 @@ class AudioParams:
     hop_ms: float = 3.0
     nx: int = NX_DEFAULT
     target_sr: int = 22050
+    # v0.5.0: trim defaults OFF.  The original waveform's natural
+    # lead-in / fade-out becomes the form's tapered ends.  Toggle on
+    # in the Input tab for recordings with long dead air.
+    trim_silence_enabled: bool = False
     trim_top_db: float = 30.0
     digital_jitter_sigma: float = 0.4
     length_smooth_sigma: float = 0.6

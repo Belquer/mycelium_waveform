@@ -1,9 +1,19 @@
 """
-voice-to-form  —  src/gui/tab_input.py  v0.4.0
+voice-to-form  —  src/gui/tab_input.py  v0.5.0
 
 Input tab: load a WAV from disk OR record from the mic (open-ended:
 press once to start, press again to stop), with pickers for the audio
 input device + channel + output device.
+
+v0.5.0:
+  - Input and Output pickers laid out side-by-side (compact instead
+    of a tall vertical stack).
+  - Trim-silence toggle exposed in the UI (default OFF) so the
+    audio's natural lead-in becomes the form's tapered start.
+  - Fixes a bug where the channel spinbox stayed editable on a
+    mono device when the device was already the current selection
+    (setCurrentIndex was a no-op and our _device_changed handler
+    never fired).
 
 v0.4.0:
   - Playback review: Play/Stop toggle that routes the loaded or
@@ -20,7 +30,7 @@ v0.2.0: toggle record button, input-device + channel pickers.
 """
 from __future__ import annotations
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 import sys
 import time
@@ -33,6 +43,7 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFileDialog, QLabel,
     QLineEdit, QPlainTextEdit, QSpinBox, QGroupBox, QMessageBox, QComboBox,
+    QCheckBox, QGridLayout, QSizePolicy,
 )
 import pyqtgraph as pg
 
@@ -89,76 +100,114 @@ class InputTab(QWidget):
 
         src_layout.addWidget(_hline())
 
-        # ---- Input device + channel
-        dev_row = QHBoxLayout()
-        dev_row.addWidget(QLabel("Input device"))
-        self.device_combo = QComboBox()
-        self.device_combo.currentIndexChanged.connect(self._device_changed)
-        dev_row.addWidget(self.device_combo, stretch=1)
+        # ---- Two-column Input | Output -------------------------------
+        cols = QHBoxLayout()
+        cols.setSpacing(20)
 
+        # Input column ----------
+        inp_col = QVBoxLayout()
+        inp_header = QLabel("<b>Input</b>")
+        inp_col.addWidget(inp_header)
+
+        inp_dev_row = QHBoxLayout()
+        self.device_combo = QComboBox()
+        self.device_combo.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                        QSizePolicy.Policy.Preferred)
+        # Make the dropdown not stretch to fit the longest item; ellide
+        # long names instead.
+        self.device_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.device_combo.setMinimumContentsLength(18)
+        self.device_combo.currentIndexChanged.connect(self._device_changed)
+        inp_dev_row.addWidget(self.device_combo, stretch=1)
         self.refresh_devices_btn = QPushButton("↻")
-        self.refresh_devices_btn.setFixedWidth(32)
-        self.refresh_devices_btn.setToolTip("Re-scan audio devices")
+        self.refresh_devices_btn.setFixedWidth(28)
+        self.refresh_devices_btn.setToolTip("Re-scan audio inputs")
         self.refresh_devices_btn.clicked.connect(self._refresh_devices)
-        dev_row.addWidget(self.refresh_devices_btn)
-        src_layout.addLayout(dev_row)
+        inp_dev_row.addWidget(self.refresh_devices_btn)
+        inp_col.addLayout(inp_dev_row)
 
         chan_row = QHBoxLayout()
         chan_row.addWidget(QLabel("Channel"))
         self.channel_box = QSpinBox()
         self.channel_box.setRange(1, 1)
         self.channel_box.setValue(1)
+        self.channel_box.setFixedWidth(60)
         self.channel_box.valueChanged.connect(self._channel_changed)
         chan_row.addWidget(self.channel_box)
         self.channel_hint = QLabel("(of 1)")
         self.channel_hint.setStyleSheet("color: #888")
         chan_row.addWidget(self.channel_hint)
         chan_row.addStretch()
-        src_layout.addLayout(chan_row)
+        inp_col.addLayout(chan_row)
 
-        # ---- Record toggle
         rec_row = QHBoxLayout()
         self.record_btn = QPushButton("● Record")
         self.record_btn.setStyleSheet(
-            "QPushButton { font-weight: bold; padding: 8px 16px; }"
+            "QPushButton { font-weight: bold; padding: 6px 12px; }"
         )
         self.record_btn.clicked.connect(self._toggle_record)
         rec_row.addWidget(self.record_btn)
-
         self.record_time_label = QLabel("")
         self.record_time_label.setStyleSheet(
             "font-family: ui-monospace, Menlo, monospace; color: #555;"
         )
         rec_row.addWidget(self.record_time_label)
         rec_row.addStretch()
-        src_layout.addLayout(rec_row)
+        inp_col.addLayout(rec_row)
+        inp_col.addStretch()
 
-        src_layout.addWidget(_hline())
+        # Output column ----------
+        out_col = QVBoxLayout()
+        out_col.addWidget(QLabel("<b>Output</b>"))
 
-        # ---- Output device + playback
-        out_row = QHBoxLayout()
-        out_row.addWidget(QLabel("Output device"))
+        out_dev_row = QHBoxLayout()
         self.output_combo = QComboBox()
+        self.output_combo.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                        QSizePolicy.Policy.Preferred)
+        self.output_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.output_combo.setMinimumContentsLength(18)
         self.output_combo.currentIndexChanged.connect(self._output_device_changed)
-        out_row.addWidget(self.output_combo, stretch=1)
-
+        out_dev_row.addWidget(self.output_combo, stretch=1)
         self.refresh_outputs_btn = QPushButton("↻")
-        self.refresh_outputs_btn.setFixedWidth(32)
-        self.refresh_outputs_btn.setToolTip("Re-scan output devices")
+        self.refresh_outputs_btn.setFixedWidth(28)
+        self.refresh_outputs_btn.setToolTip("Re-scan audio outputs")
         self.refresh_outputs_btn.clicked.connect(self._refresh_output_devices)
-        out_row.addWidget(self.refresh_outputs_btn)
-        src_layout.addLayout(out_row)
+        out_dev_row.addWidget(self.refresh_outputs_btn)
+        out_col.addLayout(out_dev_row)
+
+        # Empty filler to line the Play button up with Record button vertically.
+        filler = QLabel("")
+        filler.setFixedHeight(self.channel_box.sizeHint().height())
+        out_col.addWidget(filler)
 
         play_row = QHBoxLayout()
         self.play_btn = QPushButton("▶ Play")
         self.play_btn.setStyleSheet(
-            "QPushButton { font-weight: bold; padding: 8px 16px; }"
+            "QPushButton { font-weight: bold; padding: 6px 12px; }"
         )
         self.play_btn.clicked.connect(self._toggle_play)
         self.play_btn.setEnabled(False)
         play_row.addWidget(self.play_btn)
         play_row.addStretch()
-        src_layout.addLayout(play_row)
+        out_col.addLayout(play_row)
+        out_col.addStretch()
+
+        cols.addLayout(inp_col, stretch=1)
+        cols.addLayout(out_col, stretch=1)
+        src_layout.addLayout(cols)
+
+        # ---- Trim toggle (full-width, below the two columns) ----------
+        trim_row = QHBoxLayout()
+        self.trim_check = QCheckBox("Trim leading/trailing silence")
+        self.trim_check.setToolTip(
+            "When OFF (default), the recording's natural lead-in/fade-out "
+            "becomes the form's tapered ends.  Turn ON to strip dead air."
+        )
+        self.trim_check.setChecked(self.state.config.audio.trim_silence_enabled)
+        self.trim_check.toggled.connect(self._trim_toggled)
+        trim_row.addWidget(self.trim_check)
+        trim_row.addStretch()
+        src_layout.addLayout(trim_row)
 
         # Info row
         self.info_label = QLabel("")
@@ -236,6 +285,11 @@ class InputTab(QWidget):
         # Try to pre-select whatever's already in the config.
         cfg_idx = self.state.config.audio.input_device_index
         self._select_device_by_index(cfg_idx)
+        # setCurrentIndex doesn't fire signals if the index didn't
+        # change (e.g. it was already 0 for "System default" after the
+        # addItem loop).  Call the handler explicitly so the channel
+        # spinbox's enabled state is correct on first load.
+        self._device_changed(self.device_combo.currentIndex())
         self._channel_changed(self.channel_box.value())
 
     def _select_device_by_index(self, idx: Optional[int]):
@@ -276,6 +330,16 @@ class InputTab(QWidget):
         # Stored as 0-indexed.
         self.state.config.audio.input_channel = max(0, int(value) - 1)
 
+    def _trim_toggled(self, checked: bool):
+        self.state.config.audio.trim_silence_enabled = bool(checked)
+        # If audio is already loaded, re-run the pipeline so the
+        # taper-vs-trim choice takes effect immediately.
+        if self.state.source_wav is not None:
+            try:
+                self.state.load_source(self.state.source_wav)
+            except Exception:
+                pass
+
     # ------------------------------------------------------------------
     # Output device picker + playback
     # ------------------------------------------------------------------
@@ -297,6 +361,8 @@ class InputTab(QWidget):
                     target = i
                     break
         self.output_combo.setCurrentIndex(target)
+        # Same no-op-signal gotcha as the input combo — call directly.
+        self._output_device_changed(self.output_combo.currentIndex())
 
     def _output_device_changed(self, _i: int):
         idx = self.output_combo.currentData()
