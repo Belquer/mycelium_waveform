@@ -1,7 +1,17 @@
 """
-voice-to-form  —  src/preview.py  v0.6.2
+voice-to-form  —  src/preview.py  v0.6.3
 
 3D viewport for the GUI.
+
+v0.6.3 — fixes a crash from using the wrong ShaderProgram API.
+pyqtgraph stores uniforms in `uniformData` and only supports
+glUniform1fv at bind time, so:
+  - Uniform values must be passed as 1-element lists (or any
+    iterable with `len`), not bare scalars.
+  - All uniforms must be floats — `int` uniforms can't be set.
+    u_bump_pattern is now a float and cast inside the shader.
+  - We use `shader[name] = [value]` (which calls setUniformData)
+    instead of writing to a `.uniforms` dict.
 
 v0.6.2 — robust shader fallback.  If the custom GLSL fails to compile
 on the user's driver (Apple Silicon + Core profile can be picky about
@@ -37,7 +47,7 @@ v0.4.0:
 """
 from __future__ import annotations
 
-__version__ = "0.6.2"
+__version__ = "0.6.3"
 
 import os
 import sys
@@ -95,7 +105,7 @@ _FRAGMENT_SRC = """
 uniform float u_roughness;
 uniform float u_metalness;
 uniform float u_bump_intensity;
-uniform int   u_bump_pattern;
+uniform float u_bump_pattern;
 uniform float u_ambient;
 
 varying vec3 v_normal;
@@ -186,7 +196,11 @@ vec3 perturb_normal(vec3 N, vec3 P, int pattern, float intensity) {
 
 void main() {
     vec3 N = normalize(v_normal);
-    N = perturb_normal(N, v_obj_pos * 0.025, u_bump_pattern, u_bump_intensity);
+    // u_bump_pattern is float (pyqtgraph only sets uniforms via
+    // glUniform1fv); cast to int locally for the switch.
+    N = perturb_normal(N, v_obj_pos * 0.025,
+                       int(u_bump_pattern + 0.5),
+                       u_bump_intensity);
 
     // Fixed key light in view space — feels stable as the user orbits.
     vec3 L = normalize(vec3(0.35, 0.55, 0.75));
@@ -222,11 +236,18 @@ _PBR_SHADER_NAME = "voice_to_form_pbr"
 
 
 def _register_pbr_shader():
-    """Register the custom shader on pyqtgraph's global Shaders list (idempotent)."""
+    """Register the custom shader on pyqtgraph's global Shaders list (idempotent).
+
+    pyqtgraph 0.13 stores uniforms in `uniformData` and only ever
+    sets them with glUniform1fv at bind time — so every value must
+    be an iterable of floats (1-element list is fine for scalars).
+    """
     import pyqtgraph.opengl.shaders as shaders
-    for sp in shaders.Shaders:
-        if getattr(sp, "name", None) == _PBR_SHADER_NAME:
-            return sp
+    # pyqtgraph keeps a name registry in ShaderProgram.names — check
+    # there before scanning the active Shaders list.
+    existing = getattr(shaders.ShaderProgram, "names", {}).get(_PBR_SHADER_NAME)
+    if existing is not None:
+        return existing
     sp = shaders.ShaderProgram(
         _PBR_SHADER_NAME,
         [
@@ -234,14 +255,17 @@ def _register_pbr_shader():
             shaders.FragmentShader(_FRAGMENT_SRC),
         ],
         uniforms={
-            "u_roughness": 0.5,
-            "u_metalness": 0.0,
-            "u_bump_intensity": 0.0,
-            "u_bump_pattern": 0,
-            "u_ambient": 0.25,
+            "u_roughness": [0.5],
+            "u_metalness": [0.0],
+            "u_bump_intensity": [0.0],
+            "u_bump_pattern": [0.0],
+            "u_ambient": [0.25],
         },
     )
-    shaders.Shaders.append(sp)
+    # Append to the active list too — GLMeshItem looks shaders up by
+    # name from there.
+    if hasattr(shaders, "Shaders") and sp not in shaders.Shaders:
+        shaders.Shaders.append(sp)
     return sp
 
 
@@ -383,21 +407,21 @@ class PreviewWidget:
         """Update PBR uniforms on the shared shader.
 
         No-op when the fallback 'shaded' shader is in play — those
-        uniforms don't exist there.  The uniforms re-bind on the next
-        paint; we also poke an update() so the redraw happens promptly.
+        uniforms don't exist there.  Values are wrapped in 1-element
+        lists because pyqtgraph's only uniform setter is glUniform1fv.
         """
-        if self._pbr_shader is not None:
-            u = self._pbr_shader.uniforms
+        sp = self._pbr_shader
+        if sp is not None:
             if roughness is not None:
-                u["u_roughness"] = float(roughness)
+                sp["u_roughness"] = [float(roughness)]
             if metalness is not None:
-                u["u_metalness"] = float(metalness)
+                sp["u_metalness"] = [float(metalness)]
             if bump_intensity is not None:
-                u["u_bump_intensity"] = float(bump_intensity)
+                sp["u_bump_intensity"] = [float(bump_intensity)]
             if bump_pattern is not None:
                 if isinstance(bump_pattern, str):
                     bump_pattern = BUMP_PATTERN_INDEX.get(bump_pattern, 0)
-                u["u_bump_pattern"] = int(bump_pattern)
+                sp["u_bump_pattern"] = [float(bump_pattern)]
         if self._mesh_item is not None:
             try:
                 self._mesh_item.update()
