@@ -1,19 +1,22 @@
 """
-voice-to-form  —  src/gui/tab_input.py  v0.2.0
+voice-to-form  —  src/gui/tab_input.py  v0.3.0
 
 Input tab: load a WAV from disk OR record from the mic (open-ended:
 press once to start, press again to stop), with a picker for the audio
 input device + channel.
 
-v0.2.0:
-  - Toggle record button (no fixed duration).
-  - Audio input device dropdown (lists all input-capable devices via
-    sounddevice.query_devices).
-  - Channel spinbox (1..max_channels of the selected device).
+v0.3.0:
+  - High-contrast waveform plot: deep violet curve on a cream
+    paper-coloured background, echoing the artist's napkin sketches
+    of the form's silhouette.
+  - Recorded WAVs land in library/ so the auto-generated examples/
+    folder doesn't accumulate clutter.
+
+v0.2.0: toggle record button, input-device + channel pickers.
 """
 from __future__ import annotations
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 import sys
 import time
@@ -145,11 +148,29 @@ class InputTab(QWidget):
         layout.addWidget(meta_group)
 
         # ---- Waveform preview --------------------------------------------
+        # Cream paper background + deep-violet ink: high contrast and a
+        # callback to the artist's hand-drawn waveform sketches.
+        WAVE_BG = "#f7f3e8"          # warm cream / butcher paper
+        WAVE_INK = "#3a1f5d"         # deep ink violet
+        WAVE_GRID = "#d8cfb8"        # subtle paper-grid colour
+        WAVE_AXIS = "#5a4a35"
+
         self.wave_plot = pg.PlotWidget(title="Waveform")
         self.wave_plot.setMaximumHeight(180)
-        self.wave_plot.showGrid(x=True, y=True, alpha=0.2)
-        self.wave_plot.setLabel("bottom", "samples")
-        self.wave_curve = self.wave_plot.plot([], [], pen=pg.mkPen("#444", width=0.6))
+        self.wave_plot.setBackground(WAVE_BG)
+        self.wave_plot.showGrid(x=True, y=True, alpha=0.35)
+        self.wave_plot.setLabel("bottom", "samples", color=WAVE_AXIS)
+        # Axis pens — match the ink/paper aesthetic.
+        for axis_name in ("bottom", "left", "top", "right"):
+            axis = self.wave_plot.getAxis(axis_name)
+            axis.setPen(pg.mkPen(WAVE_AXIS, width=0.8))
+            axis.setTextPen(pg.mkPen(WAVE_AXIS))
+            axis.setGrid(0)
+        # Title in deep ink too.
+        self.wave_plot.getPlotItem().setTitle("Waveform", color=WAVE_AXIS, size="10pt")
+        self.wave_curve = self.wave_plot.plot(
+            [], [], pen=pg.mkPen(WAVE_INK, width=1.1),
+        )
         layout.addWidget(self.wave_plot, stretch=1)
 
         # Populate device list now.

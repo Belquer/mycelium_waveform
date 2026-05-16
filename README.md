@@ -4,8 +4,9 @@ A macOS desktop app that turns short voice recordings into 3D-printable
 sculptural objects.  Single-user tool for one artist's sculptural
 practice (the mycelium-waveform project).
 
-Version: **v0.2.0** — single-click launcher, open-ended recording, audio
-device + channel selection, live appearance preview.
+Version: **v0.3.0** — vertical-ellipse cross-section (asymmetry preserved),
+combined Design tab, adjustable viewport background, high-contrast
+waveform plot.
 
 > _Every source file prints its own version on import, so the boot log
 > shows exactly which build is running. See "Versioning" at the
@@ -28,6 +29,20 @@ form built from a **shared-spine elliptical sweep**:
 The shared horizontal is the architectural commitment that kills every
 "looks like a table leg" and "looks like two pieces stuck together"
 failure mode from the development log.  Do not change it.
+
+**Cross-section aspect (v0.3+).**  The horizontal radius is multiplied
+by a tunable aspect ratio so the cross-section can be a portrait
+ellipse rather than a near-circle.  Default `aspect = 0.7` gives a
+~1.4× taller-than-wide cross-section — matching the
+"front-view-is-a-vertical-oval" sketches.  Top/bottom asymmetry is
+preserved (top still uses `top_r_v`, bottom uses `bottom_r_v`); only
+the shared horizontal width is squeezed.  Clamped to `min_r_mm` so
+quiet passages never drop below the manufacturable wall thickness.
+
+  - `aspect = 1.0` → v0.1 behaviour (near-circular when top ≈ bottom)
+  - `aspect = 0.7` → portrait ellipse (default)
+  - `aspect = 0.4` → very tall vertical ellipse
+  - `aspect = 1.5` → flattened / squashed
 
 ---
 
@@ -65,14 +80,15 @@ In the GUI:
 1. **Input** tab → pick your **Input device** (e.g. your audio
    interface) and **Channel**, then click **● Record**.  Press
    **■ Stop** when you're done — recording is open-ended, no fixed
-   duration.  (Or `Load WAV…` to use an existing file.)
-2. **Geometry** tab → see the 3D preview update live as you tune
-   length / min-r / max-r.  Form is centred against a mid-tone
-   background so you can actually see it on first launch.
-3. **Appearance** tab → colour / palette / background.  Changes show
-   live in the Geometry-tab preview — no need to switch tabs to verify.
-4. **Verify** tab → check the three-stack overlay; tick "Reviewed".
-5. **Export** tab → pick `FDM Plastic` → `Save to library + Export`.
+   duration.  Waveform plot is deep-violet ink on cream paper, echoing
+   the napkin sketches.  (Or `Load WAV…` to use an existing file.)
+2. **Design** tab → geometry + appearance combined.  Scrollable
+   controls on the left (dimensions, cross-section aspect, surface,
+   adjustable viewport background, advanced smoothing); live 3D
+   preview on the right.  All changes update instantly — no tab
+   switching to compare a length tweak against a colour change.
+3. **Verify** tab → check the three-stack overlay; tick "Reviewed".
+4. **Export** tab → pick `FDM Plastic` → `Save to library + Export`.
 
 A new entry appears in `library/<date>_<title>/` containing
 `source.wav`, `config.yaml`, `preview.png`, and
@@ -264,25 +280,27 @@ Per the project rules: every source file carries a semantic version
 and prints it on import.  Current file versions:
 
 ```
-main.py                       v0.2.0   (--version banner)
+main.py                       v0.3.0   (--version banner)
 src/audio.py                  v0.2.0   (Recorder, list_input_devices)
-src/geometry.py               v0.1.0
+src/geometry.py               v0.3.0   (cross_section_aspect)
 src/profiles.py               v0.1.0
 src/export.py                 v0.1.0
 src/decimation.py             v0.1.0
 src/overlay.py                v0.1.0
-src/config.py                 v0.2.0   (input_device/channel, defaults)
+src/config.py                 v0.3.0   (aspect + viewport_bg_hex)
 src/library.py                v0.1.0
 src/preview.py                v0.2.0   (set_color/set_background live)
 src/gui/state.py              v0.2.0   (appearance_changed signal)
-src/gui/main_window.py        v0.2.0
-src/gui/tab_input.py          v0.2.0   (toggle record + device picker)
-src/gui/tab_geometry.py       v0.2.0   (live appearance updates)
-src/gui/tab_appearance.py     v0.2.0   (emits appearance_changed)
+src/gui/main_window.py        v0.3.0   (4-tab layout, Design combined)
+src/gui/tab_input.py          v0.3.0   (cream/violet waveform plot)
+src/gui/tab_geometry.py       v0.3.0   (Design tab: geometry+appearance)
 src/gui/tab_verify.py         v0.1.0
 src/gui/tab_export.py         v0.1.0
 voice-to-form.command         v0.2.0   (combined setup+run)
 ```
+
+`src/gui/tab_appearance.py` is removed in v0.3.0; its controls live in
+the Design tab now.
 
 Bumps:
 
@@ -294,19 +312,28 @@ Run `python main.py --version` to print every module's banner.
 
 ---
 
-## v0.2.0 → v0.3 roadmap
+## Version history
 
-Already shipped in **v0.2.0**:
+**v0.3.0:**
 
-- One-click launcher (`voice-to-form.command`) — setup + run combined
-- Open-ended press-to-start / press-to-stop recording (no fixed
-  duration)
-- Audio input device + channel selection for multi-input interfaces
-- Live appearance preview (colour/background updates instantly)
-- Brighter default mesh colour + mid-dark viewport background so the
-  first preview is visible without picking a colour
+- `cross_section_aspect` parameter for vertical-ellipse cross sections
+  (default 0.7 — ~1.4× taller than wide).  Asymmetric top/bottom is
+  preserved; only the horizontal width is squeezed.
+- Geometry + Appearance combined into a single **Design** tab (4 tabs
+  total: Input → Design → Verify → Export).
+- Adjustable viewport background — colour-picker, hex entry,
+  brightness slider, and named presets all on the Design tab.
+- High-contrast waveform plot — deep-violet curve on cream paper.
 
-Coming in **v0.3+**:
+**v0.2.0:**
+
+- One-click launcher (`voice-to-form.command`) — setup + run combined.
+- Open-ended press-to-start / press-to-stop recording.
+- Audio input device + channel selection for multi-input interfaces.
+- Live appearance preview (colour/background updates instantly).
+- Brighter default mesh colour + mid-dark viewport background.
+
+## Coming in v0.4+
 
 - PBR procedural normal maps for the appearance bump-pattern dropdown
   (the slider state is already saved in config — only the renderer

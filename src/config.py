@@ -1,12 +1,16 @@
 """
-voice-to-form  —  src/config.py  v0.2.0
+voice-to-form  —  src/config.py  v0.3.0
 
 YAML persistence for per-form configs and the global app settings.
 
-v0.2.0 — adds input-device + input-channel fields to AudioParams (for
-multi-input audio interfaces) and changes the default appearance colour
-to a brushed-aluminum mid-tone so the preview is visible against the
-dark viewport without picking a colour first.
+v0.3.0 — adds `geometry_cross_section_aspect` (vertical-ellipse cross
+section) and `viewport_bg_hex` (adjustable viewport background)
+threaded through FormConfig.
+
+v0.2.0 added input-device + input-channel fields to AudioParams and
+changed the default appearance colour to a brushed-aluminum mid-tone
+so the preview is visible against the dark viewport without picking
+a colour first.
 
 Per-form config sits inside library/<entry>/config.yaml and records
 everything needed to reproduce the form from its source WAV.  Global
@@ -15,7 +19,7 @@ settings (recent palette, last-used profile, window pos) live in
 """
 from __future__ import annotations
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 import os
 import sys
@@ -25,7 +29,10 @@ from typing import Any, Optional
 
 import yaml
 
-from .geometry import GeometryParams, LENGTH_MM_DEFAULT, MIN_R_MM_DEFAULT, MAX_R_MM_DEFAULT, N_THETA_DEFAULT, NX_DEFAULT
+from .geometry import (
+    GeometryParams, LENGTH_MM_DEFAULT, MIN_R_MM_DEFAULT, MAX_R_MM_DEFAULT,
+    N_THETA_DEFAULT, NX_DEFAULT, CROSS_SECTION_ASPECT_DEFAULT,
+)
 
 print(f"[voice-to-form] config.py v{__version__}", file=sys.stderr)
 
@@ -118,10 +125,14 @@ class FormConfig:
     geometry_max_r_mm: float = MAX_R_MM_DEFAULT
     geometry_n_theta: int = N_THETA_DEFAULT
     geometry_nx: int = NX_DEFAULT
+    geometry_cross_section_aspect: float = CROSS_SECTION_ASPECT_DEFAULT
     appearance: AppearanceParams = field(default_factory=AppearanceParams)
+    # Viewport background as an arbitrary hex.  If empty, the named
+    # preset in `appearance.background` is used.
+    viewport_bg_hex: str = ""
     last_profile_key: str = "FDM_PLASTIC"
     reviewed_overlay: bool = False
-    voice_to_form_version: str = "0.2.0"
+    voice_to_form_version: str = "0.3.0"
 
     def geometry_params(self) -> GeometryParams:
         return GeometryParams(
@@ -130,6 +141,7 @@ class FormConfig:
             max_r_mm=self.geometry_max_r_mm,
             n_theta=self.geometry_n_theta,
             nx=self.geometry_nx,
+            cross_section_aspect=self.geometry_cross_section_aspect,
         )
 
 
@@ -167,7 +179,11 @@ def _dict_to_form_config(d: dict) -> FormConfig:
         geometry_max_r_mm=d.get("geometry_max_r_mm", MAX_R_MM_DEFAULT),
         geometry_n_theta=d.get("geometry_n_theta", N_THETA_DEFAULT),
         geometry_nx=d.get("geometry_nx", NX_DEFAULT),
+        geometry_cross_section_aspect=d.get(
+            "geometry_cross_section_aspect", CROSS_SECTION_ASPECT_DEFAULT,
+        ),
         appearance=AppearanceParams(**_filter_kwargs(AppearanceParams, appearance_d)),
+        viewport_bg_hex=d.get("viewport_bg_hex", ""),
         last_profile_key=d.get("last_profile_key", "FDM_PLASTIC"),
         reviewed_overlay=d.get("reviewed_overlay", False),
         voice_to_form_version=d.get("voice_to_form_version", "0.1.0"),

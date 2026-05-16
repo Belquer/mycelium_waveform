@@ -1,146 +1,104 @@
 """
-voice-to-form  —  src/gui/tab_geometry.py  v0.2.0
+voice-to-form  —  src/gui/tab_geometry.py  v0.3.0
 
-Geometry tab: length, min/max radius, n_theta, nx, smoothing sigmas.
-Also hosts the 3D preview viewport so parameter sweeps are visible in
-real time.
+Design tab — geometry + appearance combined.
 
-v0.2.0:
-  - Listens to AppState.appearance_changed and updates the preview
-    colour and background live (no mesh rebuild).
-  - Applies the configured background on mesh load so the very first
-    preview already shows the artist's chosen scene.
+v0.3.0:
+  - Replaces the separate Geometry and Appearance tabs.  Single split-
+    view: scrollable controls on the left, live 3D viewport on the
+    right.
+  - Adds the new `cross_section_aspect` slider (vertical-ellipse
+    cross section, default 0.7 = ~1.4× taller than wide).
+  - Adjustable viewport background via a colour-picker button right
+    next to the controls, plus the named preset dropdown.
+  - All changes live-update the preview (geometry changes debounced to
+    keep large-mesh rebuilds smooth).
 """
 from __future__ import annotations
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 import sys
-from typing import Optional
 
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QDoubleSpinBox, QSpinBox,
-    QGroupBox, QGridLayout, QFormLayout, QSplitter, QFrame,
+    QGroupBox, QFormLayout, QSplitter, QScrollArea, QPushButton, QLineEdit,
+    QColorDialog, QSlider, QComboBox, QGridLayout,
 )
 
 from .state import AppState
 from ..preview import PreviewWidget
-from ..config import BACKGROUND_PRESETS_RGB
+from ..config import BACKGROUND_PRESETS_RGB, DEFAULT_PALETTE
 
 print(f"[voice-to-form] tab_geometry.py v{__version__}", file=sys.stderr)
 
 
-class GeometryTab(QWidget):
+BUMP_PATTERNS = [
+    "smooth", "sandblasted", "beadblasted", "brushed",
+    "layered (FDM)", "porous (SLS)", "woven (carbon)", "mycelium-colonized",
+]
+
+
+class DesignTab(QWidget):
+    """Combined geometry + appearance designer with the live 3D viewport."""
+
     def __init__(self, state: AppState):
         super().__init__()
         self.state = state
-        self._debounce = QTimer(self)
-        self._debounce.setSingleShot(True)
-        self._debounce.setInterval(120)
-        self._debounce.timeout.connect(self._apply_params)
+
+        self._geom_debounce = QTimer(self)
+        self._geom_debounce.setSingleShot(True)
+        self._geom_debounce.setInterval(120)
+        self._geom_debounce.timeout.connect(self._apply_geometry_params)
+
         self._build_ui()
 
         state.mesh_changed.connect(self._on_mesh)
         state.appearance_changed.connect(self._on_appearance_changed)
 
-        # Apply the initial background so the empty viewport already
-        # reflects the configured studio.
+        # Apply the initial background so the viewport already reflects
+        # the configured scene.
         self._apply_background()
+
+    # ------------------------------------------------------------------
 
     def _build_ui(self):
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        # --- left: controls ---
+        # ---- LEFT: scrollable controls --------------------------------
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
         controls = QWidget()
-        ctl_layout = QVBoxLayout(controls)
+        ctl = QVBoxLayout(controls)
 
-        dims = QGroupBox("Dimensions")
-        form = QFormLayout(dims)
+        ctl.addWidget(self._dimensions_group())
+        ctl.addWidget(self._shape_group())
+        ctl.addWidget(self._surface_group())
+        ctl.addWidget(self._background_group())
+        ctl.addWidget(self._advanced_group())
 
-        self.length_box = QDoubleSpinBox()
-        self.length_box.setRange(20.0, 1000.0)
-        self.length_box.setSuffix(" mm")
-        self.length_box.setValue(self.state.config.geometry_length_mm)
-        self.length_box.setDecimals(1)
-        form.addRow("Length", self.length_box)
-
-        self.min_r_box = QDoubleSpinBox()
-        self.min_r_box.setRange(0.1, 20.0)
-        self.min_r_box.setSuffix(" mm")
-        self.min_r_box.setDecimals(2)
-        self.min_r_box.setValue(self.state.config.geometry_min_r_mm)
-        form.addRow("Min radius", self.min_r_box)
-
-        self.max_r_box = QDoubleSpinBox()
-        self.max_r_box.setRange(2.0, 200.0)
-        self.max_r_box.setSuffix(" mm")
-        self.max_r_box.setDecimals(1)
-        self.max_r_box.setValue(self.state.config.geometry_max_r_mm)
-        form.addRow("Max radius", self.max_r_box)
-
-        self.n_theta_box = QSpinBox()
-        self.n_theta_box.setRange(16, 256)
-        self.n_theta_box.setSingleStep(2)
-        self.n_theta_box.setValue(self.state.config.geometry_n_theta)
-        form.addRow("N θ (around)", self.n_theta_box)
-
-        self.nx_box = QSpinBox()
-        self.nx_box.setRange(50, 4000)
-        self.nx_box.setSingleStep(50)
-        self.nx_box.setValue(self.state.config.geometry_nx)
-        form.addRow("NX (along)", self.nx_box)
-
-        ctl_layout.addWidget(dims)
-
-        smooth = QGroupBox("Audio smoothing (advanced)")
-        sform = QFormLayout(smooth)
-
-        self.hop_box = QDoubleSpinBox()
-        self.hop_box.setRange(0.5, 20.0)
-        self.hop_box.setSuffix(" ms")
-        self.hop_box.setDecimals(1)
-        self.hop_box.setValue(self.state.config.audio.hop_ms)
-        sform.addRow("hop", self.hop_box)
-
-        self.jitter_box = QDoubleSpinBox()
-        self.jitter_box.setRange(0.0, 4.0)
-        self.jitter_box.setDecimals(2)
-        self.jitter_box.setSingleStep(0.1)
-        self.jitter_box.setValue(self.state.config.audio.digital_jitter_sigma)
-        sform.addRow("jitter σ", self.jitter_box)
-
-        self.length_smooth_box = QDoubleSpinBox()
-        self.length_smooth_box.setRange(0.0, 4.0)
-        self.length_smooth_box.setDecimals(2)
-        self.length_smooth_box.setSingleStep(0.1)
-        self.length_smooth_box.setValue(self.state.config.audio.length_smooth_sigma)
-        sform.addRow("length σ", self.length_smooth_box)
-
-        self.gamma_box = QDoubleSpinBox()
-        self.gamma_box.setRange(0.5, 2.5)
-        self.gamma_box.setDecimals(2)
-        self.gamma_box.setSingleStep(0.05)
-        self.gamma_box.setValue(self.state.config.audio.gamma)
-        sform.addRow("γ (keep 1.0)", self.gamma_box)
-
-        ctl_layout.addWidget(smooth)
-
-        self.stats_label = QLabel("(no mesh yet)")
-        self.stats_label.setStyleSheet("color: #555")
+        self.stats_label = QLabel("(load a WAV to generate a mesh)")
+        self.stats_label.setStyleSheet("color: #555;")
         self.stats_label.setWordWrap(True)
-        ctl_layout.addWidget(self.stats_label)
+        ctl.addWidget(self.stats_label)
+        ctl.addStretch()
 
-        ctl_layout.addStretch()
+        scroll.setWidget(controls)
+        scroll.setMinimumWidth(360)
+        scroll.setMaximumWidth(460)
 
-        # --- right: 3D viewport ---
+        # ---- RIGHT: 3D viewport ---------------------------------------
         self.preview = PreviewWidget()
         right = QWidget()
         rlay = QVBoxLayout(right)
         rlay.setContentsMargins(0, 0, 0, 0)
         rlay.addWidget(self.preview.widget())
 
-        splitter.addWidget(controls)
+        splitter.addWidget(scroll)
         splitter.addWidget(right)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
@@ -149,36 +107,340 @@ class GeometryTab(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.addWidget(splitter)
 
-        # Hook up change signals (all debounced through _apply_params).
-        for w in (self.length_box, self.min_r_box, self.max_r_box,
-                  self.hop_box, self.jitter_box, self.length_smooth_box,
-                  self.gamma_box):
-            w.valueChanged.connect(lambda *_: self._debounce.start())
-        for w in (self.n_theta_box, self.nx_box):
-            w.valueChanged.connect(lambda *_: self._debounce.start())
-
+    # ------------------------------------------------------------------
+    # Group builders
     # ------------------------------------------------------------------
 
-    def _apply_params(self):
+    def _dimensions_group(self) -> QGroupBox:
+        g = QGroupBox("Dimensions")
+        form = QFormLayout(g)
+        cfg = self.state.config
+
+        self.length_box = self._double(cfg.geometry_length_mm, 20.0, 1000.0, suffix=" mm", decimals=1)
+        self.min_r_box = self._double(cfg.geometry_min_r_mm, 0.1, 20.0, suffix=" mm", decimals=2)
+        self.max_r_box = self._double(cfg.geometry_max_r_mm, 2.0, 200.0, suffix=" mm", decimals=1)
+        self.n_theta_box = QSpinBox(); self.n_theta_box.setRange(16, 256); self.n_theta_box.setSingleStep(2)
+        self.n_theta_box.setValue(cfg.geometry_n_theta)
+        self.nx_box = QSpinBox(); self.nx_box.setRange(50, 4000); self.nx_box.setSingleStep(50)
+        self.nx_box.setValue(cfg.geometry_nx)
+
+        form.addRow("Length", self.length_box)
+        form.addRow("Min radius", self.min_r_box)
+        form.addRow("Max radius", self.max_r_box)
+        form.addRow("N θ (around)", self.n_theta_box)
+        form.addRow("NX (along)", self.nx_box)
+
+        for w in (self.length_box, self.min_r_box, self.max_r_box):
+            w.valueChanged.connect(self._queue_geometry)
+        for w in (self.n_theta_box, self.nx_box):
+            w.valueChanged.connect(self._queue_geometry)
+        return g
+
+    def _shape_group(self) -> QGroupBox:
+        g = QGroupBox("Cross-section")
+        form = QFormLayout(g)
+        cfg = self.state.config
+
+        # Aspect slider — maps 30..150 → 0.30..1.50
+        self.aspect_slider = QSlider(Qt.Orientation.Horizontal)
+        self.aspect_slider.setRange(30, 150)
+        self.aspect_slider.setValue(int(round(cfg.geometry_cross_section_aspect * 100)))
+        self.aspect_value_label = QLabel(f"{cfg.geometry_cross_section_aspect:0.2f}")
+        self.aspect_value_label.setStyleSheet(
+            "font-family: ui-monospace, Menlo, monospace; color: #444; min-width: 40px;"
+        )
+        self.aspect_slider.valueChanged.connect(self._aspect_changed)
+
+        aspect_row = QHBoxLayout()
+        aspect_row.addWidget(self.aspect_slider, stretch=1)
+        aspect_row.addWidget(self.aspect_value_label)
+        aspect_wrap = QWidget(); aspect_wrap.setLayout(aspect_row)
+
+        form.addRow("Aspect", aspect_wrap)
+        form.addRow(QLabel(
+            "<i>Horizontal radius as a fraction of the mean vertical.<br>"
+            "0.30 = very tall ellipse, 0.70 = portrait, 1.00 = ~circular,<br>"
+            "1.50 = squashed.  Clamped to Min radius.</i>"
+        ))
+        return g
+
+    def _surface_group(self) -> QGroupBox:
+        g = QGroupBox("Surface (preview only)")
+        outer = QVBoxLayout(g)
+        cfg = self.state.config
+
+        # Colour swatch + hex
+        color_row = QHBoxLayout()
+        self.color_swatch = QPushButton()
+        self.color_swatch.setFixedSize(40, 28)
+        self.color_swatch.clicked.connect(self._pick_color)
+        color_row.addWidget(self.color_swatch)
+
+        self.hex_edit = QLineEdit(cfg.appearance.color_hex)
+        self.hex_edit.setMaximumWidth(120)
+        self.hex_edit.editingFinished.connect(self._hex_changed)
+        color_row.addWidget(self.hex_edit)
+        color_row.addStretch()
+        outer.addLayout(color_row)
+        self._sync_color_swatch()
+
+        # Palette grid
+        grid = QGridLayout()
+        for i, p in enumerate(DEFAULT_PALETTE):
+            btn = QPushButton(p["name"])
+            btn.setFixedHeight(24)
+            btn.setStyleSheet(
+                f"background-color: {p['hex']}; "
+                f"color: {'#fff' if _is_dark(p['hex']) else '#000'};"
+                "border: 1px solid #555;"
+            )
+            btn.clicked.connect(lambda _=False, h=p["hex"]: self._set_color(h))
+            grid.addWidget(btn, i // 3, i % 3)
+        outer.addLayout(grid)
+
+        # Sliders
+        slider_form = QFormLayout()
+        self.roughness = self._slider(cfg.appearance.roughness)
+        self.metalness = self._slider(cfg.appearance.metalness)
+        self.bump = self._slider(cfg.appearance.bump_intensity)
+        slider_form.addRow("Roughness", self.roughness)
+        slider_form.addRow("Metalness", self.metalness)
+        slider_form.addRow("Bump", self.bump)
+
+        self.pattern_combo = QComboBox()
+        self.pattern_combo.addItems(BUMP_PATTERNS)
+        self.pattern_combo.setCurrentText(cfg.appearance.bump_pattern)
+        self.pattern_combo.currentTextChanged.connect(self._pattern_changed)
+        slider_form.addRow("Bump pattern", self.pattern_combo)
+        outer.addLayout(slider_form)
+
+        outer.addWidget(QLabel(
+            "<i>Color renders live; roughness/metalness/bump saved to "
+            "config but full PBR is a v0.4 item.</i>"
+        ))
+        return g
+
+    def _background_group(self) -> QGroupBox:
+        g = QGroupBox("Viewport background")
+        outer = QVBoxLayout(g)
+        cfg = self.state.config
+
+        row = QHBoxLayout()
+        self.bg_swatch = QPushButton()
+        self.bg_swatch.setFixedSize(40, 28)
+        self.bg_swatch.clicked.connect(self._pick_bg)
+        row.addWidget(self.bg_swatch)
+
+        self.bg_hex_edit = QLineEdit(self._current_bg_hex())
+        self.bg_hex_edit.setMaximumWidth(120)
+        self.bg_hex_edit.editingFinished.connect(self._bg_hex_changed)
+        row.addWidget(self.bg_hex_edit)
+        row.addStretch()
+        outer.addLayout(row)
+        self._sync_bg_swatch()
+
+        # Brightness slider — instant lighten/darken control without the
+        # color dialog.  Operates on the current chosen colour by
+        # scaling toward white/black.
+        bright_row = QHBoxLayout()
+        bright_row.addWidget(QLabel("Brightness"))
+        self.bg_brightness = QSlider(Qt.Orientation.Horizontal)
+        self.bg_brightness.setRange(0, 100)
+        self.bg_brightness.setValue(50)
+        self.bg_brightness.setToolTip(
+            "Quickly lighten / darken the picked background. "
+            "50 = the picked colour unchanged."
+        )
+        self.bg_brightness.valueChanged.connect(self._bg_brightness_changed)
+        bright_row.addWidget(self.bg_brightness)
+        outer.addLayout(bright_row)
+
+        # Preset dropdown
+        preset_row = QHBoxLayout()
+        preset_row.addWidget(QLabel("Preset"))
+        self.bg_combo = QComboBox()
+        self.bg_combo.addItems(list(BACKGROUND_PRESETS_RGB.keys()))
+        if cfg.appearance.background in BACKGROUND_PRESETS_RGB:
+            self.bg_combo.setCurrentText(cfg.appearance.background)
+        self.bg_combo.currentTextChanged.connect(self._bg_preset_changed)
+        preset_row.addWidget(self.bg_combo, stretch=1)
+        outer.addLayout(preset_row)
+
+        return g
+
+    def _advanced_group(self) -> QGroupBox:
+        g = QGroupBox("Audio smoothing (advanced)")
+        form = QFormLayout(g)
+        cfg = self.state.config
+
+        self.hop_box = self._double(cfg.audio.hop_ms, 0.5, 20.0, suffix=" ms", decimals=1)
+        self.jitter_box = self._double(cfg.audio.digital_jitter_sigma, 0.0, 4.0, decimals=2, step=0.1)
+        self.length_smooth_box = self._double(cfg.audio.length_smooth_sigma, 0.0, 4.0, decimals=2, step=0.1)
+        self.gamma_box = self._double(cfg.audio.gamma, 0.5, 2.5, decimals=2, step=0.05)
+
+        form.addRow("hop", self.hop_box)
+        form.addRow("jitter σ", self.jitter_box)
+        form.addRow("length σ", self.length_smooth_box)
+        form.addRow("γ (keep 1.0)", self.gamma_box)
+
+        for w in (self.hop_box, self.jitter_box, self.length_smooth_box, self.gamma_box):
+            w.valueChanged.connect(self._queue_geometry)
+        return g
+
+    # ------------------------------------------------------------------
+    # Geometry update path (debounced — full envelope/mesh rebuild)
+    # ------------------------------------------------------------------
+
+    def _queue_geometry(self, *_):
+        self._geom_debounce.start()
+
+    def _aspect_changed(self, value: int):
+        aspect = value / 100.0
+        self.aspect_value_label.setText(f"{aspect:0.2f}")
+        self.state.config.geometry_cross_section_aspect = aspect
+        self._queue_geometry()
+
+    def _apply_geometry_params(self):
         cfg = self.state.config
         cfg.geometry_length_mm = float(self.length_box.value())
         cfg.geometry_min_r_mm = float(self.min_r_box.value())
         cfg.geometry_max_r_mm = float(self.max_r_box.value())
-        cfg.geometry_n_theta = int(self.n_theta_box.value())
-        if cfg.geometry_n_theta % 2 != 0:
-            cfg.geometry_n_theta += 1
+        # n_theta must stay even.
+        n_theta = int(self.n_theta_box.value())
+        if n_theta % 2 != 0:
+            n_theta += 1
             self.n_theta_box.blockSignals(True)
-            self.n_theta_box.setValue(cfg.geometry_n_theta)
+            self.n_theta_box.setValue(n_theta)
             self.n_theta_box.blockSignals(False)
+        cfg.geometry_n_theta = n_theta
         cfg.geometry_nx = int(self.nx_box.value())
         cfg.audio.hop_ms = float(self.hop_box.value())
         cfg.audio.digital_jitter_sigma = float(self.jitter_box.value())
         cfg.audio.length_smooth_sigma = float(self.length_smooth_box.value())
         cfg.audio.gamma = float(self.gamma_box.value())
 
-        # Re-extract envelopes (and via that, rebuild mesh).
         if self.state.audio is not None:
             self.state.recompute_envelopes()
+
+    # ------------------------------------------------------------------
+    # Appearance update path (instant — no mesh rebuild)
+    # ------------------------------------------------------------------
+
+    def _slider(self, value: float) -> QSlider:
+        s = QSlider(Qt.Orientation.Horizontal)
+        s.setRange(0, 100)
+        s.setValue(int(round(value * 100)))
+        s.valueChanged.connect(self._save_pbr_sliders)
+        return s
+
+    def _save_pbr_sliders(self):
+        a = self.state.config.appearance
+        a.roughness = self.roughness.value() / 100.0
+        a.metalness = self.metalness.value() / 100.0
+        a.bump_intensity = self.bump.value() / 100.0
+        self.state.appearance_changed.emit()
+
+    def _pick_color(self):
+        c = QColorDialog.getColor(QColor(self.state.config.appearance.color_hex), self)
+        if c.isValid():
+            self._set_color(c.name())
+
+    def _hex_changed(self):
+        text = self.hex_edit.text().strip()
+        if not text.startswith("#"):
+            text = "#" + text
+        if len(text) == 7:
+            self._set_color(text)
+
+    def _set_color(self, hex_str: str):
+        self.state.config.appearance.color_hex = hex_str
+        self.hex_edit.setText(hex_str)
+        self._sync_color_swatch()
+        self.state.appearance_changed.emit()
+
+    def _sync_color_swatch(self):
+        h = self.state.config.appearance.color_hex
+        self.color_swatch.setStyleSheet(
+            f"background-color: {h}; border: 1px solid #333; border-radius: 3px;"
+        )
+
+    def _pattern_changed(self, text: str):
+        self.state.config.appearance.bump_pattern = text
+        self.state.appearance_changed.emit()
+
+    # ------------------------------------------------------------------
+    # Background — adjustable, with custom hex, brightness slider, and
+    # preset dropdown all wired up.
+    # ------------------------------------------------------------------
+
+    def _current_bg_hex(self) -> str:
+        cfg = self.state.config
+        if cfg.viewport_bg_hex:
+            return cfg.viewport_bg_hex
+        return BACKGROUND_PRESETS_RGB.get(cfg.appearance.background, "#2e3236")
+
+    def _pick_bg(self):
+        c = QColorDialog.getColor(QColor(self._current_bg_hex()), self)
+        if c.isValid():
+            self._set_bg(c.name(), reset_brightness=True)
+
+    def _bg_hex_changed(self):
+        text = self.bg_hex_edit.text().strip()
+        if not text.startswith("#"):
+            text = "#" + text
+        if len(text) == 7:
+            self._set_bg(text, reset_brightness=True)
+
+    def _set_bg(self, hex_str: str, *, reset_brightness: bool):
+        self.state.config.viewport_bg_hex = hex_str
+        self.bg_hex_edit.setText(hex_str)
+        self._sync_bg_swatch()
+        if reset_brightness:
+            self.bg_brightness.blockSignals(True)
+            self.bg_brightness.setValue(50)
+            self.bg_brightness.blockSignals(False)
+        self.state.appearance_changed.emit()
+        self._apply_background()
+
+    def _bg_brightness_changed(self, value: int):
+        # 50 = unchanged; <50 darkens toward black; >50 lightens toward white.
+        base = self._current_bg_hex()
+        adjusted = _shift_brightness(base, value / 100.0)
+        self.preview.set_background(adjusted)
+        # Don't write the brightness-shifted colour back to config — the
+        # slider is a viewport-only quick adjust on top of the picked
+        # base colour.  Picking a new colour resets the slider.
+
+    def _bg_preset_changed(self, name: str):
+        self.state.config.appearance.background = name
+        # When a preset is picked, clear the custom override so the
+        # preset's own hex applies.
+        self.state.config.viewport_bg_hex = ""
+        if name in BACKGROUND_PRESETS_RGB:
+            self.bg_hex_edit.setText(BACKGROUND_PRESETS_RGB[name])
+            self._sync_bg_swatch()
+        self.bg_brightness.blockSignals(True)
+        self.bg_brightness.setValue(50)
+        self.bg_brightness.blockSignals(False)
+        self.state.appearance_changed.emit()
+        self._apply_background()
+
+    def _sync_bg_swatch(self):
+        self.bg_swatch.setStyleSheet(
+            f"background-color: {self._current_bg_hex()}; "
+            "border: 1px solid #333; border-radius: 3px;"
+        )
+
+    def _apply_background(self):
+        # Honour the brightness slider if it's off centre.
+        base = self._current_bg_hex()
+        slider = self.bg_brightness.value() if hasattr(self, "bg_brightness") else 50
+        shown = base if slider == 50 else _shift_brightness(base, slider / 100.0)
+        self.preview.set_background(shown)
+
+    # ------------------------------------------------------------------
+    # Mesh / appearance signal handlers
+    # ------------------------------------------------------------------
 
     def _on_mesh(self, mesh):
         a = self.state.config.appearance
@@ -191,11 +453,58 @@ class GeometryTab(QWidget):
         )
 
     def _on_appearance_changed(self):
-        a = self.state.config.appearance
-        self.preview.set_color(a.color_hex)
+        self.preview.set_color(self.state.config.appearance.color_hex)
         self._apply_background()
 
-    def _apply_background(self):
-        name = self.state.config.appearance.background
-        hex_str = BACKGROUND_PRESETS_RGB.get(name, "#2e3236")
-        self.preview.set_background(hex_str)
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _double(self, value: float, lo: float, hi: float, *,
+                suffix: str = "", decimals: int = 1,
+                step: float | None = None) -> QDoubleSpinBox:
+        sb = QDoubleSpinBox()
+        sb.setRange(lo, hi)
+        sb.setDecimals(decimals)
+        sb.setValue(value)
+        if suffix:
+            sb.setSuffix(suffix)
+        if step is not None:
+            sb.setSingleStep(step)
+        return sb
+
+
+# Backwards compatibility for any code still importing GeometryTab.
+GeometryTab = DesignTab
+
+
+# --------------------------------------------------------------------------
+# Free helpers
+# --------------------------------------------------------------------------
+
+def _is_dark(hex_str: str) -> bool:
+    h = hex_str.lstrip("#")
+    if len(h) != 6:
+        return False
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return (0.299 * r + 0.587 * g + 0.114 * b) < 128
+
+
+def _shift_brightness(hex_str: str, t: float) -> str:
+    """Shift a hex colour toward black (t<0.5) or white (t>0.5).
+
+    t in [0, 1].  0 → fully black, 0.5 → unchanged, 1 → fully white.
+    """
+    h = hex_str.lstrip("#")
+    if len(h) != 6:
+        return hex_str
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    if t < 0.5:
+        k = t / 0.5  # 0..1
+        r, g, b = int(r * k), int(g * k), int(b * k)
+    else:
+        k = (t - 0.5) / 0.5  # 0..1
+        r = int(r + (255 - r) * k)
+        g = int(g + (255 - g) * k)
+        b = int(b + (255 - b) * k)
+    return f"#{r:02x}{g:02x}{b:02x}"

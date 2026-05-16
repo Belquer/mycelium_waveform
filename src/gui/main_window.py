@@ -1,13 +1,17 @@
 """
-voice-to-form  —  src/gui/main_window.py  v0.2.0
+voice-to-form  —  src/gui/main_window.py  v0.3.0
 
-Five-tab QMainWindow.  Owns the AppState and threads signals between
-tabs.  Library view (grid of past forms) is a v0.3 roadmap item — v0.2
-ships the plain list view.
+Four-tab QMainWindow (plus Library): Input → Design → Verify → Export.
+Geometry and Appearance are combined into a single Design tab so the
+artist isn't shuttling between tabs to compare a parameter change
+against the colour/finish.
+
+Library view (thumbnail grid) is a v0.4 roadmap item — v0.3 keeps the
+plain list view.
 """
 from __future__ import annotations
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 import sys
 from pathlib import Path
@@ -21,8 +25,7 @@ from PyQt6.QtWidgets import (
 
 from .state import AppState
 from .tab_input import InputTab
-from .tab_geometry import GeometryTab
-from .tab_appearance import AppearanceTab
+from .tab_geometry import DesignTab
 from .tab_verify import VerifyTab
 from .tab_export import ExportTab
 from ..library import list_entries, LibraryEntry
@@ -41,17 +44,15 @@ class MainWindow(QMainWindow):
 
         self.tabs = QTabWidget()
         self.tab_input = InputTab(self.state)
-        self.tab_geometry = GeometryTab(self.state)
-        self.tab_appearance = AppearanceTab(self.state)
+        self.tab_design = DesignTab(self.state)
         self.tab_verify = VerifyTab(self.state)
         self.tab_export = ExportTab(self.state)
         self.tab_library = LibraryTab(self._on_library_open)
 
         self.tabs.addTab(self.tab_input, "1 · Input")
-        self.tabs.addTab(self.tab_geometry, "2 · Geometry")
-        self.tabs.addTab(self.tab_appearance, "3 · Appearance")
-        self.tabs.addTab(self.tab_verify, "4 · Verify")
-        self.tabs.addTab(self.tab_export, "5 · Export")
+        self.tabs.addTab(self.tab_design, "2 · Design")
+        self.tabs.addTab(self.tab_verify, "3 · Verify")
+        self.tabs.addTab(self.tab_export, "4 · Export")
         self.tabs.addTab(self.tab_library, "Library")
         self.setCentralWidget(self.tabs)
 
@@ -67,7 +68,7 @@ class MainWindow(QMainWindow):
 
         open_act = QAction("Open WAV…", self)
         open_act.setShortcut(QKeySequence.StandardKey.Open)
-        open_act.triggered.connect(self.tab_input._load_clicked)
+        open_act.triggered.connect(self.tab_input._load_clicked)  # noqa: SLF001
         file_menu.addAction(open_act)
 
         save_act = QAction("Save to Library + Export", self)
@@ -103,7 +104,7 @@ class MainWindow(QMainWindow):
             self.state.config = cfg
             self.state.load_source(entry.source_wav)
             self.statusBar().showMessage(f"Opened library entry: {entry.path.name}")
-            self.tabs.setCurrentWidget(self.tab_geometry)
+            self.tabs.setCurrentWidget(self.tab_design)
         except Exception as e:
             QMessageBox.critical(self, "Open failed", repr(e))
 
