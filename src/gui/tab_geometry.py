@@ -1,23 +1,26 @@
 """
-voice-to-form  —  src/gui/tab_geometry.py  v0.6.0
+voice-to-form  —  src/gui/tab_geometry.py  v0.6.1
 
 Design tab — geometry + appearance combined.
 
-v0.6.0:
-  - Aspect is now editable: slider + QDoubleSpinBox, two-way synced.
-    Type 0.43 directly if that's what you want.
-  - Surface sliders (roughness, metalness, bump intensity, bump
-    pattern) are now wired through to the custom shader in
-    preview.py — they actually change the render in real time.
+v0.6.1 — layout fixes after a v0.6.0 regression report:
+  - The scroll panel's max-width was being ignored by the splitter
+    (which sizes from child sizeHints).  Switched to setFixedWidth
+    plus splitter.setSizes so the left column can't sprawl across
+    the viewport area.
+  - Palette grid now uses equal column stretches; the leftmost
+    button no longer eats all the horizontal space.
+  - Dimensions group rewritten with QGridLayout (was QFormLayout)
+    — more deterministic rendering across Qt/PyQt builds; works
+    around an empty-form-rows artefact reported on macOS.
 
-v0.3.0:
-  - Replaces the separate Geometry and Appearance tabs.
-  - `cross_section_aspect` slider (vertical-ellipse cross section).
-  - Adjustable viewport background.
+v0.6.0:
+  - Aspect editable (slider + QDoubleSpinBox, synced).
+  - Surface sliders wired to the custom GLSL shader in preview.py.
 """
 from __future__ import annotations
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
 
 import sys
 
@@ -26,7 +29,7 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QDoubleSpinBox, QSpinBox,
     QGroupBox, QFormLayout, QSplitter, QScrollArea, QPushButton, QLineEdit,
-    QColorDialog, QSlider, QComboBox, QGridLayout,
+    QColorDialog, QSlider, QComboBox, QGridLayout, QSizePolicy,
 )
 
 from .state import AppState
@@ -72,9 +75,21 @@ class DesignTab(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        # setFixedWidth pins both min and max plus the size policy.
+        # setMaximumWidth alone was being ignored by QSplitter, which
+        # gave the scroll area whatever its content's sizeHint
+        # suggested — sprawling across the viewport area.
+        scroll.setFixedWidth(440)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
 
         controls = QWidget()
+        # Constrain inner contents so they never push the scroll area
+        # to widen.  20 px shy of scroll width to leave room for the
+        # vertical scrollbar.
+        controls.setMaximumWidth(420)
         ctl = QVBoxLayout(controls)
+        ctl.setContentsMargins(8, 8, 8, 8)
 
         ctl.addWidget(self._dimensions_group())
         ctl.addWidget(self._shape_group())
@@ -89,8 +104,6 @@ class DesignTab(QWidget):
         ctl.addStretch()
 
         scroll.setWidget(controls)
-        scroll.setMinimumWidth(360)
-        scroll.setMaximumWidth(460)
 
         # ---- RIGHT: 3D viewport ---------------------------------------
         self.preview = PreviewWidget()
@@ -103,6 +116,9 @@ class DesignTab(QWidget):
         splitter.addWidget(right)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
+        # Force initial split so neither pane "wins" via sizeHint.
+        splitter.setSizes([440, 1100])
+        splitter.setChildrenCollapsible(False)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -114,7 +130,9 @@ class DesignTab(QWidget):
 
     def _dimensions_group(self) -> QGroupBox:
         g = QGroupBox("Dimensions")
-        form = QFormLayout(g)
+        grid = QGridLayout(g)
+        grid.setColumnStretch(0, 0)
+        grid.setColumnStretch(1, 1)
         cfg = self.state.config
 
         self.length_box = self._double(cfg.geometry_length_mm, 20.0, 1000.0, suffix=" mm", decimals=1)
@@ -125,11 +143,22 @@ class DesignTab(QWidget):
         self.nx_box = QSpinBox(); self.nx_box.setRange(50, 4000); self.nx_box.setSingleStep(50)
         self.nx_box.setValue(cfg.geometry_nx)
 
-        form.addRow("Length", self.length_box)
-        form.addRow("Min radius", self.min_r_box)
-        form.addRow("Max radius", self.max_r_box)
-        form.addRow("N θ (around)", self.n_theta_box)
-        form.addRow("NX (along)", self.nx_box)
+        # Spinboxes get a comfortable minimum height so they're not
+        # collapsed by the form layout's row math.
+        for sb in (self.length_box, self.min_r_box, self.max_r_box,
+                   self.n_theta_box, self.nx_box):
+            sb.setMinimumHeight(24)
+
+        rows = [
+            ("Length", self.length_box),
+            ("Min radius", self.min_r_box),
+            ("Max radius", self.max_r_box),
+            ("N θ (around)", self.n_theta_box),
+            ("NX (along)", self.nx_box),
+        ]
+        for i, (lbl, w) in enumerate(rows):
+            grid.addWidget(QLabel(lbl), i, 0)
+            grid.addWidget(w, i, 1)
 
         for w in (self.length_box, self.min_r_box, self.max_r_box):
             w.valueChanged.connect(self._queue_geometry)
@@ -193,15 +222,22 @@ class DesignTab(QWidget):
         outer.addLayout(color_row)
         self._sync_color_swatch()
 
-        # Palette grid
+        # Palette grid — 3 columns sharing horizontal space equally.
+        # Without explicit stretch, Qt gives column 0 most of the space
+        # and collapses the rest.
         grid = QGridLayout()
+        grid.setHorizontalSpacing(4)
+        grid.setVerticalSpacing(4)
+        for col in range(3):
+            grid.setColumnStretch(col, 1)
         for i, p in enumerate(DEFAULT_PALETTE):
             btn = QPushButton(p["name"])
             btn.setFixedHeight(24)
+            btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             btn.setStyleSheet(
                 f"background-color: {p['hex']}; "
                 f"color: {'#fff' if _is_dark(p['hex']) else '#000'};"
-                "border: 1px solid #555;"
+                "border: 1px solid #555; padding: 2px;"
             )
             btn.clicked.connect(lambda _=False, h=p["hex"]: self._set_color(h))
             grid.addWidget(btn, i // 3, i % 3)

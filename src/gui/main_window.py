@@ -1,17 +1,21 @@
 """
-voice-to-form  —  src/gui/main_window.py  v0.3.0
+voice-to-form  —  src/gui/main_window.py  v0.6.1
 
 Four-tab QMainWindow (plus Library): Input → Design → Verify → Export.
 Geometry and Appearance are combined into a single Design tab so the
 artist isn't shuttling between tabs to compare a parameter change
 against the colour/finish.
 
-Library view (thumbnail grid) is a v0.4 roadmap item — v0.3 keeps the
+Window title now sources from the package's top-level __version__
+so it tracks the released app version rather than this module's
+local version.
+
+Library view (thumbnail grid) is on the roadmap; v0.6 keeps the
 plain list view.
 """
 from __future__ import annotations
 
-__version__ = "0.3.0"
+__version__ = "0.6.1"
 
 import sys
 from pathlib import Path
@@ -37,7 +41,14 @@ print(f"[voice-to-form] gui/main_window.py v{__version__}", file=sys.stderr)
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"voice-to-form v{__version__}")
+        # Use the package's top-level __version__ for the title so it
+        # tracks the released app version rather than this module's
+        # local one.
+        try:
+            from .. import __version__ as APP_VERSION
+        except Exception:
+            APP_VERSION = __version__
+        self.setWindowTitle(f"voice-to-form v{APP_VERSION}")
         self.resize(1280, 820)
 
         self.state = AppState()
@@ -89,9 +100,13 @@ class MainWindow(QMainWindow):
         help_menu.addAction(about_act)
 
     def _about(self):
+        try:
+            from .. import __version__ as APP_VERSION
+        except Exception:
+            APP_VERSION = __version__
         QMessageBox.information(
             self, "voice-to-form",
-            f"voice-to-form v{__version__}\n"
+            f"voice-to-form v{APP_VERSION}\n"
             "Shared-spine elliptical sweep — voice recordings → 3D-printable forms.\n\n"
             "See README.md for the diagnostic overlay rationale and profile guide.",
         )

@@ -1,2 +1,2 @@
-"""voice-to-form package v0.1.0"""
-__version__ = "0.1.0"
+"""voice-to-form package v0.6.1"""
+__version__ = "0.6.1"
