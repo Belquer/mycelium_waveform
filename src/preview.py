@@ -1,25 +1,24 @@
 """
-voice-to-form  —  src/preview.py  v0.2.0
+voice-to-form  —  src/preview.py  v0.4.0
 
 3D viewport for the GUI.  Built on pyqtgraph.opengl (which wraps
 PyOpenGL) — gives us interactive rotate/zoom for free and keeps the
 dependency surface small.
 
-v0.2.0:
-  - `set_color()` and `set_background()` update the displayed mesh
-    without rebuilding it — so Appearance-tab changes show live in
-    the Geometry-tab viewport.
-  - Lighter default background and a brighter default colour so the
-    very first preview (matte-black-on-matte-black) is no longer
-    invisible.
+v0.4.0:
+  - Default background is a light studio white (matches the new
+    AppearanceParams default).
+  - **Shift + trackpad scroll** rotates the sculpture around its long
+    (X) axis, so trackpad users can spin the form like a rotisserie
+    to inspect top/bottom asymmetry without click-dragging the
+    camera orbit.
 
-PBR procedural normal maps for the bump_pattern dropdown are still on
-the v0.3 roadmap.  Slider state is persisted in config so artists can
-save intent before the rendering catches up.
+v0.3.0 — adjustable background colour via config.
+v0.2.0 — `set_color()` / `set_background()` update live.
 """
 from __future__ import annotations
 
-__version__ = "0.2.0"
+__version__ = "0.4.0"
 
 import sys
 from typing import Optional
@@ -31,18 +30,25 @@ from .geometry import Mesh
 print(f"[voice-to-form] preview.py v{__version__}", file=sys.stderr)
 
 
-# We import Qt + pyqtgraph lazily inside the class so this module is
-# importable headlessly (for tests / CLI) without DISPLAY.
+# How many degrees of long-axis spin per unit of trackpad/wheel
+# angleDelta().y().  120 units = one mouse-wheel "click" on most
+# systems; on macOS trackpads each pixel reports ~4 units.  0.15 ° /
+# unit means a full mouse-wheel notch is 18° and a normal trackpad
+# swipe feels like ~30–60° per gesture.  Tune if needed.
+SPIN_DEG_PER_UNIT = 0.15
+
 
 class PreviewWidget:
     """Thin wrapper around pyqtgraph.opengl.GLViewWidget."""
 
-    DEFAULT_BG_RGB = (46, 50, 54)  # mid-dark neutral; flatters most colours
+    # Light studio-white default so the viewport doesn't blink dark at
+    # startup before the configured background applies.
+    DEFAULT_BG_RGB = (245, 245, 245)
 
     def __init__(self):
         import pyqtgraph.opengl as gl
         self.gl = gl
-        self.view = gl.GLViewWidget()
+        self.view = _SpinningGLView(self)
         self.view.setBackgroundColor(self.DEFAULT_BG_RGB)
         self.view.setCameraPosition(distance=380, elevation=12, azimuth=45)
 
@@ -74,7 +80,7 @@ class PreviewWidget:
         mesh_data = self.gl.MeshData(vertexes=verts, faces=faces)
         # shader='shaded' gives diffuse + ambient + specular.  Metalness
         # and roughness map onto specular intensity in v0.2; full PBR
-        # in v0.3.
+        # in v0.4+.
         self._mesh_item = self.gl.GLMeshItem(
             meshdata=mesh_data,
             smooth=True,
@@ -113,6 +119,23 @@ class PreviewWidget:
         self.view.setBackgroundColor((r, g, b))
 
     # ----------------------------------------------------------------------
+    # Long-axis spin (called from _SpinningGLView's wheelEvent override)
+    # ----------------------------------------------------------------------
+
+    def spin_long_axis(self, deg: float) -> None:
+        """Rotate the displayed mesh by `deg` degrees around the X axis.
+
+        Called from Shift+wheel events.  Acts on the mesh item, not the
+        camera, so the orbit / pan controls keep working independently.
+        """
+        if self._mesh_item is None or deg == 0.0:
+            return
+        # GLMeshItem.rotate(angle, x, y, z) rotates around the world axis.
+        # Since the mesh is centred at origin by set_mesh(), this rotates
+        # around the form's centroid — visually the long-axis spin.
+        self._mesh_item.rotate(float(deg), 1.0, 0.0, 0.0)
+
+    # ----------------------------------------------------------------------
 
     def _add_axis(self) -> None:
         try:
@@ -123,6 +146,55 @@ class PreviewWidget:
         except Exception:
             pass
 
+
+# --------------------------------------------------------------------------
+# GLViewWidget subclass — intercepts Shift+wheel for long-axis rotation
+# --------------------------------------------------------------------------
+
+def _make_spinning_view_class():
+    """Return the GLViewWidget subclass.
+
+    Lazy import so this module is importable without a Qt display in
+    tests / CLI mode.
+    """
+    import pyqtgraph.opengl as gl
+    from PyQt6.QtCore import Qt
+
+    class _SpinningGLView(gl.GLViewWidget):
+        def __init__(self, owner: "PreviewWidget"):
+            super().__init__()
+            self._owner = owner
+
+        def wheelEvent(self, ev):  # noqa: N802 (Qt camelCase override)
+            mods = ev.modifiers()
+            if mods & Qt.KeyboardModifier.ShiftModifier:
+                ad = ev.angleDelta()
+                # Trackpad scroll on macOS reports y deltas; mouse-wheel
+                # also fills y.  We use y so vertical swipe → spin.
+                delta = ad.y() or ad.x()
+                if delta:
+                    self._owner.spin_long_axis(delta * SPIN_DEG_PER_UNIT)
+                ev.accept()
+                return
+            super().wheelEvent(ev)
+
+    return _SpinningGLView
+
+
+# Placeholder until first PreviewWidget is constructed (real class is
+# resolved lazily via _make_spinning_view_class()).
+class _SpinningGLView:  # type: ignore[no-redef]
+    _real_cls = None
+
+    def __new__(cls, owner):
+        if cls._real_cls is None:
+            cls._real_cls = _make_spinning_view_class()
+        return cls._real_cls(owner)
+
+
+# --------------------------------------------------------------------------
+# Hex helpers
+# --------------------------------------------------------------------------
 
 def _hex_to_rgba(h: str) -> tuple[float, float, float, float]:
     r, g, b = _hex_to_rgb(h)

@@ -1,7 +1,11 @@
 """
-voice-to-form  —  src/config.py  v0.3.0
+voice-to-form  —  src/config.py  v0.4.0
 
 YAML persistence for per-form configs and the global app settings.
+
+v0.4.0 — default viewport background is now `studio_white` (gallery
+look).  The studio_white preset itself is brightened to a true
+off-white so it actually reads as "white" rather than light gray.
 
 v0.3.0 — adds `geometry_cross_section_aspect` (vertical-ellipse cross
 section) and `viewport_bg_hex` (adjustable viewport background)
@@ -19,7 +23,7 @@ settings (recent palette, last-used profile, window pos) live in
 """
 from __future__ import annotations
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 import os
 import sys
@@ -51,8 +55,8 @@ GLOBAL_SETTINGS_PATH = APP_DIR / "settings.yaml"
 # hex.  v0.2 keeps it simple (solid colours).  Gradient + HDR env-map
 # support stays on the v0.3 roadmap.
 BACKGROUND_PRESETS_RGB: dict[str, str] = {
+    "studio_white":     "#f5f5f5",
     "studio_dark":      "#2e3236",
-    "studio_white":     "#e7e9ec",
     "black_void":       "#000000",
     "warm_gallery":     "#3b332b",
     "cool_studio":      "#1f242a",
@@ -95,6 +99,8 @@ class AudioParams:
     input_device_index: Optional[int] = None
     # 0-indexed channel within the chosen device.
     input_channel: int = 0
+    # Output device for playback review.  None = system default.
+    output_device_index: Optional[int] = None
 
 
 @dataclass
@@ -107,8 +113,8 @@ class AppearanceParams:
     metalness: float = 0.0
     bump_intensity: float = 0.0
     bump_pattern: str = "smooth"
-    # "studio_dark" is a mid-dark neutral that flatters most colours.
-    background: str = "studio_dark"
+    # "studio_white" gives the clean gallery / 3D-printing-service look.
+    background: str = "studio_white"
     light_temp_k: int = 5200
     light_rig_rotation_deg: float = 0.0
     raking_light: bool = False

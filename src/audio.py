@@ -1,7 +1,11 @@
 """
-voice-to-form  —  src/audio.py  v0.2.0
+voice-to-form  —  src/audio.py  v0.4.0
 
 Audio I/O and envelope extraction for the shared-spine elliptical sweep.
+
+v0.4.0 — adds the `Player` class (push-to-start / push-to-stop
+playback), `list_output_devices()`, and `default_output_device_index()`
+so the Input tab can route playback to a chosen output interface.
 
 v0.2.0 — adds the open-ended `Recorder` (press-to-start / press-to-stop),
 `list_input_devices()` for the GUI's device picker, and per-channel
@@ -27,7 +31,7 @@ overshoots and the form stops looking like the audio.
 """
 from __future__ import annotations
 
-__version__ = "0.2.0"
+__version__ = "0.4.0"
 
 import sys
 from dataclasses import dataclass
@@ -374,6 +378,146 @@ def write_wav(out_path: str | Path, audio: np.ndarray, sr: int) -> Path:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     sf.write(str(out_path), audio, sr, subtype="PCM_16")
     return out_path
+
+
+# --------------------------------------------------------------------------
+# Playback — output devices + Player
+# --------------------------------------------------------------------------
+
+@dataclass
+class OutputDevice:
+    index: int
+    name: str
+    max_channels: int
+    default_samplerate: int
+
+    def label(self) -> str:
+        return f"{self.name}  ({self.max_channels} out · {self.default_samplerate} Hz)"
+
+
+def list_output_devices() -> list[OutputDevice]:
+    """Enumerate audio output devices."""
+    import sounddevice as sd
+    out: list[OutputDevice] = []
+    try:
+        devices = sd.query_devices()
+    except Exception as e:
+        print(f"[voice-to-form] could not list audio devices: {e!r}", file=sys.stderr)
+        return out
+    for i, d in enumerate(devices):
+        if int(d.get("max_output_channels", 0)) > 0:
+            out.append(OutputDevice(
+                index=i,
+                name=str(d.get("name", f"device #{i}")),
+                max_channels=int(d["max_output_channels"]),
+                default_samplerate=int(d.get("default_samplerate", 44100) or 44100),
+            ))
+    return out
+
+
+def default_output_device_index() -> Optional[int]:
+    """System default output device index, or None on failure."""
+    import sounddevice as sd
+    try:
+        d = sd.default.device
+        idx = d[1] if isinstance(d, (list, tuple)) else d
+        return int(idx) if idx is not None and idx != -1 else None
+    except Exception:
+        return None
+
+
+class Player:
+    """Push-to-start / push-to-stop playback of a 1-D mono buffer.
+
+    Uses an sounddevice.OutputStream with a pull callback that walks
+    through the buffer.  Raising CallbackStop from the callback ends
+    the stream cleanly when the buffer's exhausted.
+
+    The GUI polls `is_playing` on a QTimer to flip the Play/Stop
+    button back when playback finishes naturally — that's simpler
+    than threading a Qt signal back from sounddevice's audio thread.
+    """
+
+    def __init__(self):
+        self._audio: Optional[np.ndarray] = None
+        self._sr: int = 22050
+        self._device_index: Optional[int] = None
+        self._pos: int = 0
+        self._stream = None
+
+    @property
+    def is_playing(self) -> bool:
+        if self._stream is None:
+            return False
+        try:
+            return bool(self._stream.active)
+        except Exception:
+            return False
+
+    def play(
+        self,
+        audio: np.ndarray,
+        sr: int,
+        device_index: Optional[int] = None,
+    ) -> None:
+        """Start playback of `audio` (1-D float32) at sample rate `sr`."""
+        import sounddevice as sd
+        self.stop()  # idempotent
+        if audio is None or audio.size == 0:
+            return
+        self._audio = np.ascontiguousarray(audio.astype(np.float32, copy=False))
+        self._sr = int(sr)
+        self._device_index = device_index
+        self._pos = 0
+
+        # Most output devices have 2 channels (stereo).  We duplicate
+        # mono into both channels — that's almost always what the
+        # artist wants ("hear it on both speakers/sides").
+        try:
+            if device_index is None:
+                channels = 2
+            else:
+                info = sd.query_devices(device_index, "output")
+                channels = max(1, min(2, int(info.get("max_output_channels", 1))))
+        except Exception:
+            channels = 2
+        self._channels = channels
+
+        self._stream = sd.OutputStream(
+            samplerate=self._sr,
+            device=self._device_index,
+            channels=self._channels,
+            dtype="float32",
+            callback=self._cb,
+        )
+        self._stream.start()
+
+    def stop(self) -> None:
+        if self._stream is None:
+            return
+        try:
+            self._stream.stop()
+        finally:
+            try:
+                self._stream.close()
+            except Exception:
+                pass
+            self._stream = None
+
+    def _cb(self, outdata, frames, time_info, status):  # noqa: ARG002
+        import sounddevice as sd
+        if self._audio is None:
+            outdata.fill(0)
+            raise sd.CallbackStop
+        end = min(self._pos + frames, len(self._audio))
+        chunk = self._audio[self._pos:end]
+        n = len(chunk)
+        # Broadcast mono into N channels.
+        outdata[:n, :] = chunk[:, None]
+        if n < frames:
+            outdata[n:, :] = 0.0
+            raise sd.CallbackStop
+        self._pos = end
 
 
 # --------------------------------------------------------------------------

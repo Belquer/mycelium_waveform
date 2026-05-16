@@ -4,9 +4,9 @@ A macOS desktop app that turns short voice recordings into 3D-printable
 sculptural objects.  Single-user tool for one artist's sculptural
 practice (the mycelium-waveform project).
 
-Version: **v0.3.0** — vertical-ellipse cross-section (asymmetry preserved),
-combined Design tab, adjustable viewport background, high-contrast
-waveform plot.
+Version: **v0.4.0** — playback review, output-device selection,
+Shift + trackpad scroll spins the form around its long axis, studio-white
+default viewport.
 
 > _Every source file prints its own version on import, so the boot log
 > shows exactly which build is running. See "Versioning" at the
@@ -280,19 +280,19 @@ Per the project rules: every source file carries a semantic version
 and prints it on import.  Current file versions:
 
 ```
-main.py                       v0.3.0   (--version banner)
-src/audio.py                  v0.2.0   (Recorder, list_input_devices)
+main.py                       v0.4.0   (--version banner)
+src/audio.py                  v0.4.0   (Player, list_output_devices)
 src/geometry.py               v0.3.0   (cross_section_aspect)
 src/profiles.py               v0.1.0
 src/export.py                 v0.1.0
 src/decimation.py             v0.1.0
 src/overlay.py                v0.1.0
-src/config.py                 v0.3.0   (aspect + viewport_bg_hex)
+src/config.py                 v0.4.0   (output_device_index, studio_white)
 src/library.py                v0.1.0
-src/preview.py                v0.2.0   (set_color/set_background live)
+src/preview.py                v0.4.0   (Shift+wheel long-axis spin)
 src/gui/state.py              v0.2.0   (appearance_changed signal)
 src/gui/main_window.py        v0.3.0   (4-tab layout, Design combined)
-src/gui/tab_input.py          v0.3.0   (cream/violet waveform plot)
+src/gui/tab_input.py          v0.4.0   (playback + output device picker)
 src/gui/tab_geometry.py       v0.3.0   (Design tab: geometry+appearance)
 src/gui/tab_verify.py         v0.1.0
 src/gui/tab_export.py         v0.1.0
@@ -313,6 +313,20 @@ Run `python main.py --version` to print every module's banner.
 ---
 
 ## Version history
+
+**v0.4.0:**
+
+- **Playback review.** Play / Stop toggle on the Input tab, with its
+  own output-device dropdown.  Useful for confirming what you just
+  recorded before generating geometry.
+- **Mono input → channel locked.** When the selected input interface
+  has only one channel, the channel spinbox disables (nothing to
+  pick).
+- **Shift + trackpad scroll = rotate around the form's long axis.**
+  Trackpad users can spin the sculpture like a rotisserie to inspect
+  all angles without click-dragging the camera orbit.
+- **Default background = studio_white.**  Studio_white preset is now
+  a true off-white (`#f5f5f5`) instead of light gray.
 
 **v0.3.0:**
 

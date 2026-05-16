@@ -1,22 +1,26 @@
 """
-voice-to-form  —  src/gui/tab_input.py  v0.3.0
+voice-to-form  —  src/gui/tab_input.py  v0.4.0
 
 Input tab: load a WAV from disk OR record from the mic (open-ended:
-press once to start, press again to stop), with a picker for the audio
-input device + channel.
+press once to start, press again to stop), with pickers for the audio
+input device + channel + output device.
+
+v0.4.0:
+  - Playback review: Play/Stop toggle that routes the loaded or
+    recorded audio to a chosen output device.
+  - Mono input devices disable the channel spinbox (no editing when
+    there's nothing to pick).
 
 v0.3.0:
   - High-contrast waveform plot: deep violet curve on a cream
     paper-coloured background, echoing the artist's napkin sketches
     of the form's silhouette.
-  - Recorded WAVs land in library/ so the auto-generated examples/
-    folder doesn't accumulate clutter.
 
 v0.2.0: toggle record button, input-device + channel pickers.
 """
 from __future__ import annotations
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 import sys
 import time
@@ -35,6 +39,7 @@ import pyqtgraph as pg
 from .state import AppState
 from ..audio import (
     Recorder, InputDevice, list_input_devices, default_input_device_index,
+    Player, OutputDevice, list_output_devices, default_output_device_index,
     write_wav,
 )
 
@@ -51,6 +56,16 @@ class InputTab(QWidget):
         self._tick.setInterval(100)
         self._tick.timeout.connect(self._update_record_time)
         self._devices: list[InputDevice] = []
+        self._output_devices: list[OutputDevice] = []
+
+        self._player = Player()
+        # Polls the player so the Play button flips back to ▶ when the
+        # buffer finishes naturally (the sounddevice finished_callback
+        # fires on the audio thread — easier to poll from Qt).
+        self._play_poll = QTimer(self)
+        self._play_poll.setInterval(150)
+        self._play_poll.timeout.connect(self._poll_player)
+
         self._build_ui()
         state.audio_loaded.connect(self._on_audio_loaded)
 
@@ -118,6 +133,33 @@ class InputTab(QWidget):
         rec_row.addStretch()
         src_layout.addLayout(rec_row)
 
+        src_layout.addWidget(_hline())
+
+        # ---- Output device + playback
+        out_row = QHBoxLayout()
+        out_row.addWidget(QLabel("Output device"))
+        self.output_combo = QComboBox()
+        self.output_combo.currentIndexChanged.connect(self._output_device_changed)
+        out_row.addWidget(self.output_combo, stretch=1)
+
+        self.refresh_outputs_btn = QPushButton("↻")
+        self.refresh_outputs_btn.setFixedWidth(32)
+        self.refresh_outputs_btn.setToolTip("Re-scan output devices")
+        self.refresh_outputs_btn.clicked.connect(self._refresh_output_devices)
+        out_row.addWidget(self.refresh_outputs_btn)
+        src_layout.addLayout(out_row)
+
+        play_row = QHBoxLayout()
+        self.play_btn = QPushButton("▶ Play")
+        self.play_btn.setStyleSheet(
+            "QPushButton { font-weight: bold; padding: 8px 16px; }"
+        )
+        self.play_btn.clicked.connect(self._toggle_play)
+        self.play_btn.setEnabled(False)
+        play_row.addWidget(self.play_btn)
+        play_row.addStretch()
+        src_layout.addLayout(play_row)
+
         # Info row
         self.info_label = QLabel("")
         self.info_label.setStyleSheet("color: #444")
@@ -173,8 +215,9 @@ class InputTab(QWidget):
         )
         layout.addWidget(self.wave_plot, stretch=1)
 
-        # Populate device list now.
+        # Populate device lists now.
         self._refresh_devices()
+        self._refresh_output_devices()
 
     # ------------------------------------------------------------------
     # Device picker
@@ -222,10 +265,91 @@ class InputTab(QWidget):
         wanted = max(1, min(self.state.config.audio.input_channel + 1, max_ch))
         self.channel_box.setValue(wanted)
         self.channel_hint.setText(f"(of {max_ch})")
+        # Mono interfaces have nothing to pick — disable the spinbox.
+        mono = (max_ch <= 1)
+        self.channel_box.setEnabled(not mono)
+        self.channel_box.setToolTip(
+            "Only one input channel on this device." if mono else ""
+        )
 
     def _channel_changed(self, value: int):
         # Stored as 0-indexed.
         self.state.config.audio.input_channel = max(0, int(value) - 1)
+
+    # ------------------------------------------------------------------
+    # Output device picker + playback
+    # ------------------------------------------------------------------
+
+    def _refresh_output_devices(self):
+        self._output_devices = list_output_devices()
+        self.output_combo.blockSignals(True)
+        self.output_combo.clear()
+        self.output_combo.addItem("System default", userData=None)
+        for d in self._output_devices:
+            self.output_combo.addItem(d.label(), userData=d.index)
+        self.output_combo.blockSignals(False)
+
+        cfg_idx = self.state.config.audio.output_device_index
+        target = 0
+        if cfg_idx is not None:
+            for i in range(self.output_combo.count()):
+                if self.output_combo.itemData(i) == cfg_idx:
+                    target = i
+                    break
+        self.output_combo.setCurrentIndex(target)
+
+    def _output_device_changed(self, _i: int):
+        idx = self.output_combo.currentData()
+        self.state.config.audio.output_device_index = idx
+        # If we're currently playing, restart on the new device.
+        if self._player.is_playing and self.state.audio is not None:
+            sr = self.state.sample_rate or 22050
+            self._player.play(self.state.audio, sr, device_index=idx)
+
+    def _toggle_play(self):
+        if self._player.is_playing:
+            self._player.stop()
+            self._update_play_button(False)
+            return
+        if self.state.audio is None:
+            return
+        # Stop recording first if it's running — they share hardware
+        # routing in some setups, and the user obviously wants to
+        # listen now.
+        if self._recorder is not None and self._recorder.is_recording:
+            self._stop_recording()
+        try:
+            self._player.play(
+                self.state.audio,
+                self.state.sample_rate or 22050,
+                device_index=self.state.config.audio.output_device_index,
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Playback failed",
+                f"{e!r}\n\nCheck the output device selection.",
+            )
+            return
+        self._update_play_button(True)
+        self._play_poll.start()
+
+    def _poll_player(self):
+        if not self._player.is_playing:
+            self._play_poll.stop()
+            self._update_play_button(False)
+
+    def _update_play_button(self, playing: bool):
+        if playing:
+            self.play_btn.setText("■ Stop")
+            self.play_btn.setStyleSheet(
+                "QPushButton { font-weight: bold; padding: 8px 16px; "
+                "background-color: #285c3a; color: white; }"
+            )
+        else:
+            self.play_btn.setText("▶ Play")
+            self.play_btn.setStyleSheet(
+                "QPushButton { font-weight: bold; padding: 8px 16px; }"
+            )
 
     # ------------------------------------------------------------------
     # Load / Record
@@ -252,6 +376,12 @@ class InputTab(QWidget):
             self._stop_recording()
 
     def _start_recording(self):
+        # Stop playback first — recording while playing usually feeds
+        # the speakers back into the mic.
+        if self._player.is_playing:
+            self._player.stop()
+            self._play_poll.stop()
+            self._update_play_button(False)
         try:
             audio = self.state.config.audio
             self._recorder = Recorder(
@@ -330,6 +460,8 @@ class InputTab(QWidget):
         self.state.config.notes = self.notes_edit.toPlainText()
 
     def _on_audio_loaded(self, y: np.ndarray):
+        # Audio is available now — enable playback.
+        self.play_btn.setEnabled(y.size > 0)
         if y.size > 2000:
             stride = max(1, y.size // 2000)
             preview = y[::stride]
