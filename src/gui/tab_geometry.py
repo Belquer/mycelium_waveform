@@ -1,7 +1,13 @@
 """
-voice-to-form  —  src/gui/tab_geometry.py  v0.6.1
+voice-to-form  —  src/gui/tab_geometry.py  v0.6.2
 
 Design tab — geometry + appearance combined.
+
+v0.6.2 — placeholder mesh so the viewport isn't blank on startup.  A
+synthetic tapered-bell form (asymmetric top/bottom) is generated from
+the current dimensions; dimension + aspect + appearance changes all
+update it live.  As soon as real audio is loaded the placeholder is
+replaced by the audio-driven mesh.
 
 v0.6.1 — layout fixes after a v0.6.0 regression report:
   - The scroll panel's max-width was being ignored by the splitter
@@ -20,7 +26,7 @@ v0.6.0:
 """
 from __future__ import annotations
 
-__version__ = "0.6.1"
+__version__ = "0.6.2"
 
 import sys
 
@@ -65,6 +71,10 @@ class DesignTab(QWidget):
         # Apply the initial background so the viewport already reflects
         # the configured scene.
         self._apply_background()
+
+        # Drop a placeholder mesh into the viewport so it's not blank
+        # on startup.  Real audio will replace it via _on_mesh.
+        self._show_placeholder()
 
     # ------------------------------------------------------------------
 
@@ -335,6 +345,70 @@ class DesignTab(QWidget):
         return g
 
     # ------------------------------------------------------------------
+    # Placeholder mesh — shown before any audio is loaded
+    # ------------------------------------------------------------------
+
+    def _show_placeholder(self):
+        """Generate a synthetic tapered-bell mesh from current dimensions.
+
+        Gives the viewport something to render before the artist loads
+        or records audio, and lets dimension / aspect / appearance
+        sliders have visible effect on the empty state.  Replaced by
+        real audio-driven mesh via _on_mesh().
+        """
+        if self.state.audio is not None:
+            return
+        import numpy as np
+        from ..audio import Envelopes
+        from ..geometry import build_mesh, GeometryParams
+
+        nx = 200
+        x = np.linspace(0.0, 1.0, nx, dtype=np.float32)
+        # Asymmetric bell: pronounced top, softer bottom.  Echoes a
+        # real recording's positive-vs-negative envelope.  Clamp to
+        # >=0 before the fractional power — floating-point underflow
+        # makes sin(π·1) slightly negative, and (-tiny)**0.6 = NaN.
+        s = np.maximum(np.sin(np.pi * x), 0.0)
+        env_top = (s ** 0.6).astype(np.float32)
+        env_bot = (s ** 0.45 * 0.7).astype(np.float32)
+        env = Envelopes(
+            top=env_top, bottom=env_bot, rms=env_top,
+            sample_rate=22050, duration_s=1.0, hop_ms=3.0, nx=nx,
+        )
+
+        cfg = self.state.config
+        # n_theta must stay even; clamp to a snappy value for the
+        # placeholder so dimension drags don't lag.
+        n_theta = max(16, min(48, cfg.geometry_n_theta if cfg.geometry_n_theta % 2 == 0 else cfg.geometry_n_theta + 1))
+        params = GeometryParams(
+            length_mm=cfg.geometry_length_mm,
+            min_r_mm=cfg.geometry_min_r_mm,
+            max_r_mm=cfg.geometry_max_r_mm,
+            n_theta=n_theta,
+            nx=nx,
+            cross_section_aspect=cfg.geometry_cross_section_aspect,
+        )
+        try:
+            mesh = build_mesh(env, params)
+        except Exception as e:
+            self.stats_label.setText(f"(placeholder failed: {e!r})")
+            return
+
+        a = cfg.appearance
+        self.preview.set_mesh(
+            mesh,
+            color_hex=a.color_hex,
+            roughness=a.roughness,
+            metalness=a.metalness,
+            bump_intensity=a.bump_intensity,
+            bump_pattern=a.bump_pattern,
+        )
+        self.stats_label.setText(
+            "placeholder shape — load or record audio to generate the real form "
+            f"(showing {mesh.triangle_count():,} triangles)"
+        )
+
+    # ------------------------------------------------------------------
     # Geometry update path (debounced — full envelope/mesh rebuild)
     # ------------------------------------------------------------------
 
@@ -381,6 +455,10 @@ class DesignTab(QWidget):
 
         if self.state.audio is not None:
             self.state.recompute_envelopes()
+        else:
+            # Pre-audio: refresh the placeholder so the sliders have
+            # visible effect.
+            self._show_placeholder()
 
     # ------------------------------------------------------------------
     # Appearance update path (instant — no mesh rebuild)

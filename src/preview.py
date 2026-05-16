@@ -1,7 +1,14 @@
 """
-voice-to-form  —  src/preview.py  v0.6.0
+voice-to-form  —  src/preview.py  v0.6.2
 
 3D viewport for the GUI.
+
+v0.6.2 — robust shader fallback.  If the custom GLSL fails to compile
+on the user's driver (Apple Silicon + Core profile can be picky about
+compat-profile constructs), GLMeshItem creation falls back to
+pyqtgraph's built-in `shaded` shader so the mesh still renders.
+Set `VOICE_TO_FORM_DISABLE_PBR=1` in the environment to force the
+fallback unconditionally.
 
 v0.6.0 — registers a custom GLSL shader (`voice_to_form_pbr`) so the
 Surface sliders on the Design tab actually affect the render:
@@ -30,8 +37,9 @@ v0.4.0:
 """
 from __future__ import annotations
 
-__version__ = "0.6.0"
+__version__ = "0.6.2"
 
+import os
 import sys
 from typing import Optional
 
@@ -249,7 +257,21 @@ class PreviewWidget:
     def __init__(self):
         import pyqtgraph.opengl as gl
         self.gl = gl
-        self._pbr_shader = _register_pbr_shader()
+
+        # Custom shader is optional — if registration throws (no GL
+        # context yet on some platforms) or VOICE_TO_FORM_DISABLE_PBR
+        # is set, fall back to pyqtgraph's built-in 'shaded'.  We
+        # don't know if the shader actually *compiles* until first
+        # paint, so set_mesh also has a try/except below.
+        self._pbr_shader = None
+        self._use_pbr = not os.environ.get("VOICE_TO_FORM_DISABLE_PBR")
+        if self._use_pbr:
+            try:
+                self._pbr_shader = _register_pbr_shader()
+            except Exception as e:
+                print(f"[voice-to-form] PBR shader registration failed: "
+                      f"{e!r}; falling back to 'shaded'", file=sys.stderr)
+                self._use_pbr = False
 
         self.view = _SpinningGLView(self)
         self.view.setBackgroundColor(self.DEFAULT_BG_RGB)
@@ -258,6 +280,10 @@ class PreviewWidget:
         self._mesh_item = None
         self._axis_item = None
         self._add_axis()
+
+    @property
+    def shader_name(self) -> str:
+        return _PBR_SHADER_NAME if self._use_pbr else "shaded"
 
     def widget(self):
         return self.view
@@ -285,16 +311,36 @@ class PreviewWidget:
             self._mesh_item = None
 
         mesh_data = self.gl.MeshData(vertexes=verts, faces=faces)
-        self._mesh_item = self.gl.GLMeshItem(
-            meshdata=mesh_data,
-            smooth=True,
-            color=color,
-            shader=_PBR_SHADER_NAME,
-            glOptions="opaque",
-        )
-        self.view.addItem(self._mesh_item)
+        try:
+            self._mesh_item = self.gl.GLMeshItem(
+                meshdata=mesh_data,
+                smooth=True,
+                color=color,
+                shader=self.shader_name,
+                glOptions="opaque",
+            )
+            self.view.addItem(self._mesh_item)
+        except Exception as e:
+            # Custom shader didn't take.  Retry with the built-in
+            # 'shaded' so the mesh actually renders.
+            print(
+                f"[voice-to-form] shader '{self.shader_name}' failed "
+                f"({e!r}); retrying with 'shaded'", file=sys.stderr,
+            )
+            self._use_pbr = False
+            self._mesh_item = self.gl.GLMeshItem(
+                meshdata=mesh_data,
+                smooth=True,
+                color=color,
+                shader="shaded",
+                glOptions="opaque",
+            )
+            self.view.addItem(self._mesh_item)
 
         # Apply the appearance state to the freshly-registered mesh.
+        # Safe even when we fell back to 'shaded' — set_pbr just
+        # updates the PBR uniforms in case the custom shader is in
+        # play; 'shaded' ignores them.
         self.set_pbr(
             roughness=roughness,
             metalness=metalness,
@@ -336,22 +382,27 @@ class PreviewWidget:
     ) -> None:
         """Update PBR uniforms on the shared shader.
 
-        The uniforms re-bind on the next paint — call view.update() to
-        trigger a redraw immediately.
+        No-op when the fallback 'shaded' shader is in play — those
+        uniforms don't exist there.  The uniforms re-bind on the next
+        paint; we also poke an update() so the redraw happens promptly.
         """
-        u = self._pbr_shader.uniforms
-        if roughness is not None:
-            u["u_roughness"] = float(roughness)
-        if metalness is not None:
-            u["u_metalness"] = float(metalness)
-        if bump_intensity is not None:
-            u["u_bump_intensity"] = float(bump_intensity)
-        if bump_pattern is not None:
-            if isinstance(bump_pattern, str):
-                bump_pattern = BUMP_PATTERN_INDEX.get(bump_pattern, 0)
-            u["u_bump_pattern"] = int(bump_pattern)
+        if self._pbr_shader is not None:
+            u = self._pbr_shader.uniforms
+            if roughness is not None:
+                u["u_roughness"] = float(roughness)
+            if metalness is not None:
+                u["u_metalness"] = float(metalness)
+            if bump_intensity is not None:
+                u["u_bump_intensity"] = float(bump_intensity)
+            if bump_pattern is not None:
+                if isinstance(bump_pattern, str):
+                    bump_pattern = BUMP_PATTERN_INDEX.get(bump_pattern, 0)
+                u["u_bump_pattern"] = int(bump_pattern)
         if self._mesh_item is not None:
-            self._mesh_item.update()
+            try:
+                self._mesh_item.update()
+            except Exception:
+                pass
         try:
             self.view.update()
         except Exception:
