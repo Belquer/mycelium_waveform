@@ -1,5 +1,5 @@
 """
-voice-to-form  —  src/gui/tab_export.py  v0.1.0
+voice-to-form  —  src/gui/tab_export.py  v0.7.2
 
 Export tab — pick a manufacturing profile, save to the library, run
 the export.  Disabled until the Verify tab's "reviewed" checkbox is
@@ -7,7 +7,7 @@ ticked.
 """
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.7.2"
 
 import sys
 import traceback
@@ -77,7 +77,7 @@ class ExportTab(QWidget):
 
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
-        self.log.setStyleSheet("font-family: ui-monospace, Menlo, monospace;")
+        self.log.setStyleSheet("font-family: Menlo, Monaco, monospace;")
         root.addWidget(self.log, stretch=1)
 
         # Initial state

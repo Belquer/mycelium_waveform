@@ -1,5 +1,5 @@
 """
-voice-to-form  —  src/gui/tab_input.py  v0.5.0
+voice-to-form  —  src/gui/tab_input.py  v0.7.2
 
 Input tab: load a WAV from disk OR record from the mic (open-ended:
 press once to start, press again to stop), with pickers for the audio
@@ -30,7 +30,7 @@ v0.2.0: toggle record button, input-device + channel pickers.
 """
 from __future__ import annotations
 
-__version__ = "0.5.0"
+__version__ = "0.7.2"
 
 import sys
 import time
@@ -149,7 +149,7 @@ class InputTab(QWidget):
         rec_row.addWidget(self.record_btn)
         self.record_time_label = QLabel("")
         self.record_time_label.setStyleSheet(
-            "font-family: ui-monospace, Menlo, monospace; color: #555;"
+            "font-family: Menlo, Monaco, monospace; color: #555;"
         )
         rec_row.addWidget(self.record_time_label)
         rec_row.addStretch()

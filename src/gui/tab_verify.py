@@ -1,5 +1,5 @@
 """
-voice-to-form  —  src/gui/tab_verify.py  v0.1.0
+voice-to-form  —  src/gui/tab_verify.py  v0.7.2
 
 Verify tab — hosts the diagnostic overlay (three stacked plots plus
 the numerical peak proportion table) and the "Reviewed" checkbox
@@ -11,7 +11,7 @@ listens to, and any change to envelopes / mesh resets it.
 """
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.7.2"
 
 import sys
 
@@ -64,7 +64,7 @@ class VerifyTab(QWidget):
         slay.addWidget(QLabel("<b>Peak proportions</b>"))
         self.report_view = QPlainTextEdit()
         self.report_view.setReadOnly(True)
-        self.report_view.setStyleSheet("font-family: ui-monospace, Menlo, monospace;")
+        self.report_view.setStyleSheet("font-family: Menlo, Monaco, monospace;")
         slay.addWidget(self.report_view, stretch=1)
 
         self.reviewed = QCheckBox("I've reviewed the overlay — proportions look right")
@@ -100,12 +100,12 @@ class VerifyTab(QWidget):
         self.report_view.setPlainText(report.as_text())
         if report.any_flagged:
             self.report_view.setStyleSheet(
-                "font-family: ui-monospace, Menlo, monospace; "
+                "font-family: Menlo, Monaco, monospace; "
                 "background-color: #fff7d6;"
             )
         else:
             self.report_view.setStyleSheet(
-                "font-family: ui-monospace, Menlo, monospace;"
+                "font-family: Menlo, Monaco, monospace;"
             )
 
     def _reviewed_changed(self, state: int):
