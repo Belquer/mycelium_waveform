@@ -1,0 +1,30 @@
+# voice-to-form requirements
+# Tested against Python 3.11 / 3.12.
+# Python 3.14 may lack prebuilt wheels for some of these — use 3.11 or 3.12 for now.
+
+# Core numerics
+numpy>=1.24
+scipy>=1.10
+
+# Audio
+librosa>=0.10.1
+soundfile>=0.12
+sounddevice>=0.4.6
+
+# Mesh I/O & manipulation
+numpy-stl>=3.0.1
+trimesh>=4.0
+# open3d is optional. Used for quadric decimation. If install fails on your
+# Python version, decimation falls back to trimesh.simplify_quadric_decimation.
+open3d>=0.18; python_version < "3.13"
+
+# Plotting (diagnostic overlay)
+matplotlib>=3.7
+
+# GUI
+PyQt6>=6.6
+pyqtgraph>=0.13
+PyOpenGL>=3.1
+
+# Config persistence
+PyYAML>=6.0

@@ -1,0 +1,22 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+.env
+.DS_Store
+.idea/
+.vscode/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+
+# Library is user data and rebuildable. Keep folder shape, ignore contents.
+library/*/
+!library/.keep
+
+# Examples may include large WAVs supplied by the user. Track sample only.
+examples/*.wav
+!examples/multitudes_sample.wav
