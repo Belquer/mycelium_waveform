@@ -1,15 +1,25 @@
 """
-voice-to-form  —  src/preview.py  v0.6.3
+voice-to-form  —  src/preview.py  v0.7.1
 
 3D viewport for the GUI.
 
-v0.6.3 — fixes a crash from using the wrong ShaderProgram API.
-pyqtgraph stores uniforms in `uniformData` and only supports
-glUniform1fv at bind time, so:
+v0.7.1 — fixes the silent "no mesh rendered" failure on macOS.
+The custom shader was using legacy GLSL builtins (gl_Vertex,
+gl_NormalMatrix, ftransform, gl_Color, gl_FrontColor) which
+don't exist in a Core OpenGL profile.  pyqtgraph's GLMeshItem
+binds vertex data via the modern `a_position` / `a_normal` /
+`a_color` attributes and `u_mvp` / `u_normal` uniforms, and that's
+what the actual built-in 'shaded' shader uses.  Rewriting to the
+same pattern fixes rendering across macOS / Apple Silicon's
+default profile.
+
+v0.6.3 — fixed the ShaderProgram API misuse.  pyqtgraph stores
+uniforms in `uniformData` and only supports glUniform1fv at bind
+time, so:
   - Uniform values must be passed as 1-element lists (or any
     iterable with `len`), not bare scalars.
   - All uniforms must be floats — `int` uniforms can't be set.
-    u_bump_pattern is now a float and cast inside the shader.
+    u_bump_pattern is a float and cast inside the shader.
   - We use `shader[name] = [value]` (which calls setUniformData)
     instead of writing to a `.uniforms` dict.
 
@@ -47,7 +57,7 @@ v0.4.0:
 """
 from __future__ import annotations
 
-__version__ = "0.6.3"
+__version__ = "0.7.1"
 
 import os
 import sys
@@ -80,36 +90,47 @@ BUMP_PATTERN_INDEX: dict[str, int] = {
 
 
 # --------------------------------------------------------------------------
-# Custom GLSL — phong-ish with bump perturbation
+# Custom GLSL — modern-attribute Phong-ish with bump perturbation
 # --------------------------------------------------------------------------
-# Kept to GLSL 1.20 / compatibility profile because that's what pyqtgraph's
-# fixed-pipeline pipeline expects (gl_NormalMatrix, gl_Color, ftransform).
+# pyqtgraph 0.13's GLMeshItem feeds vertex data via the attributes
+# `a_position` / `a_normal` / `a_color` and the uniforms `u_mvp` /
+# `u_normal`.  Using `gl_Vertex` / `gl_NormalMatrix` / `gl_Color`
+# (legacy / compat-profile builtins) renders blank on macOS's default
+# Core profile.  Stick to the modern names.
 
 _VERTEX_SRC = """
-varying vec3 v_normal;
-varying vec3 v_view_pos;
+uniform mat4 u_mvp;
+uniform mat3 u_normal;
+
+attribute vec4 a_position;
+attribute vec3 a_normal;
+attribute vec4 a_color;
+
+varying vec4 v_color;
+varying vec3 v_normal_view;
 varying vec3 v_obj_pos;
 
 void main() {
-    v_normal = normalize(gl_NormalMatrix * gl_Normal);
-    vec4 mv = gl_ModelViewMatrix * gl_Vertex;
-    v_view_pos = mv.xyz;
-    v_obj_pos = gl_Vertex.xyz;
-    gl_FrontColor = gl_Color;
-    gl_BackColor = gl_Color;
-    gl_Position = ftransform();
+    v_normal_view = normalize(u_normal * a_normal);
+    v_color = a_color;
+    v_obj_pos = a_position.xyz;
+    gl_Position = u_mvp * a_position;
 }
 """
 
 _FRAGMENT_SRC = """
+#ifdef GL_ES
+precision mediump float;
+#endif
+
 uniform float u_roughness;
 uniform float u_metalness;
 uniform float u_bump_intensity;
 uniform float u_bump_pattern;
 uniform float u_ambient;
 
-varying vec3 v_normal;
-varying vec3 v_view_pos;
+varying vec4 v_color;
+varying vec3 v_normal_view;
 varying vec3 v_obj_pos;
 
 float hash11(float n) {
@@ -195,16 +216,18 @@ vec3 perturb_normal(vec3 N, vec3 P, int pattern, float intensity) {
 }
 
 void main() {
-    vec3 N = normalize(v_normal);
+    vec3 N = normalize(v_normal_view);
     // u_bump_pattern is float (pyqtgraph only sets uniforms via
     // glUniform1fv); cast to int locally for the switch.
     N = perturb_normal(N, v_obj_pos * 0.025,
                        int(u_bump_pattern + 0.5),
                        u_bump_intensity);
 
-    // Fixed key light in view space — feels stable as the user orbits.
+    // Both N and L are in view space (u_normal transforms a_normal
+    // into view).  In view space the viewer looks down -Z and the
+    // forward direction toward the camera is +Z.
     vec3 L = normalize(vec3(0.35, 0.55, 0.75));
-    vec3 V = normalize(-v_view_pos);
+    vec3 V = vec3(0.0, 0.0, 1.0);
     vec3 H = normalize(L + V);
 
     float NdotL = max(dot(N, L), 0.0);
@@ -218,7 +241,7 @@ void main() {
     // High roughness damps the highlight; low roughness keeps it punchy.
     spec *= mix(1.0, 0.05, clamp(u_roughness, 0.0, 1.0));
 
-    vec3 base = gl_Color.rgb;
+    vec3 base = v_color.rgb;
     // Metals tint the specular with the base colour; dielectrics get white spec.
     vec3 spec_tint = mix(vec3(1.0), base, clamp(u_metalness, 0.0, 1.0));
     // Metals shed diffuse — most of their reflection is specular.
@@ -227,7 +250,7 @@ void main() {
     vec3 color = u_ambient * base
                + wrap * diffuse_color
                + spec * spec_tint;
-    gl_FragColor = vec4(color, gl_Color.a);
+    gl_FragColor = vec4(color, v_color.a);
 }
 """
 
