@@ -1,22 +1,23 @@
 """
-voice-to-form  —  src/gui/tab_geometry.py  v0.3.0
+voice-to-form  —  src/gui/tab_geometry.py  v0.6.0
 
 Design tab — geometry + appearance combined.
 
+v0.6.0:
+  - Aspect is now editable: slider + QDoubleSpinBox, two-way synced.
+    Type 0.43 directly if that's what you want.
+  - Surface sliders (roughness, metalness, bump intensity, bump
+    pattern) are now wired through to the custom shader in
+    preview.py — they actually change the render in real time.
+
 v0.3.0:
-  - Replaces the separate Geometry and Appearance tabs.  Single split-
-    view: scrollable controls on the left, live 3D viewport on the
-    right.
-  - Adds the new `cross_section_aspect` slider (vertical-ellipse
-    cross section, default 0.7 = ~1.4× taller than wide).
-  - Adjustable viewport background via a colour-picker button right
-    next to the controls, plus the named preset dropdown.
-  - All changes live-update the preview (geometry changes debounced to
-    keep large-mesh rebuilds smooth).
+  - Replaces the separate Geometry and Appearance tabs.
+  - `cross_section_aspect` slider (vertical-ellipse cross section).
+  - Adjustable viewport background.
 """
 from __future__ import annotations
 
-__version__ = "0.3.0"
+__version__ = "0.6.0"
 
 import sys
 
@@ -141,26 +142,34 @@ class DesignTab(QWidget):
         form = QFormLayout(g)
         cfg = self.state.config
 
-        # Aspect slider — maps 30..150 → 0.30..1.50
+        # Aspect: slider (visual) + editable spinbox (precise input).
+        # Two-way synced — moving one updates the other, then both
+        # forward to _apply_aspect.
         self.aspect_slider = QSlider(Qt.Orientation.Horizontal)
-        self.aspect_slider.setRange(30, 150)
+        self.aspect_slider.setRange(10, 200)  # maps 10..200 → 0.10..2.00
         self.aspect_slider.setValue(int(round(cfg.geometry_cross_section_aspect * 100)))
-        self.aspect_value_label = QLabel(f"{cfg.geometry_cross_section_aspect:0.2f}")
-        self.aspect_value_label.setStyleSheet(
-            "font-family: ui-monospace, Menlo, monospace; color: #444; min-width: 40px;"
-        )
-        self.aspect_slider.valueChanged.connect(self._aspect_changed)
+
+        self.aspect_spin = QDoubleSpinBox()
+        self.aspect_spin.setRange(0.10, 2.00)
+        self.aspect_spin.setDecimals(2)
+        self.aspect_spin.setSingleStep(0.05)
+        self.aspect_spin.setValue(cfg.geometry_cross_section_aspect)
+        self.aspect_spin.setFixedWidth(70)
+
+        self.aspect_slider.valueChanged.connect(self._aspect_slider_moved)
+        self.aspect_spin.valueChanged.connect(self._aspect_spin_changed)
 
         aspect_row = QHBoxLayout()
         aspect_row.addWidget(self.aspect_slider, stretch=1)
-        aspect_row.addWidget(self.aspect_value_label)
+        aspect_row.addWidget(self.aspect_spin)
         aspect_wrap = QWidget(); aspect_wrap.setLayout(aspect_row)
 
         form.addRow("Aspect", aspect_wrap)
         form.addRow(QLabel(
             "<i>Horizontal radius as a fraction of the mean vertical.<br>"
-            "0.30 = very tall ellipse, 0.70 = portrait, 1.00 = ~circular,<br>"
-            "1.50 = squashed.  Clamped to Min radius.</i>"
+            "0.30 = very tall, 0.70 = portrait, 1.00 = ~circular,<br>"
+            "1.50 = squashed.  Type a value or drag the slider.<br>"
+            "Clamped to Min radius.</i>"
         ))
         return g
 
@@ -215,8 +224,10 @@ class DesignTab(QWidget):
         outer.addLayout(slider_form)
 
         outer.addWidget(QLabel(
-            "<i>Color renders live; roughness/metalness/bump saved to "
-            "config but full PBR is a v0.4 item.</i>"
+            "<i>All four sliders affect the render live.  Roughness "
+            "sharpens / broadens the highlight, metalness tints the "
+            "specular by the base colour, bump patterns add procedural "
+            "surface relief.</i>"
         ))
         return g
 
@@ -294,9 +305,22 @@ class DesignTab(QWidget):
     def _queue_geometry(self, *_):
         self._geom_debounce.start()
 
-    def _aspect_changed(self, value: int):
+    def _aspect_slider_moved(self, value: int):
         aspect = value / 100.0
-        self.aspect_value_label.setText(f"{aspect:0.2f}")
+        # Block the spin's signal so we don't loop.
+        self.aspect_spin.blockSignals(True)
+        self.aspect_spin.setValue(aspect)
+        self.aspect_spin.blockSignals(False)
+        self._apply_aspect(aspect)
+
+    def _aspect_spin_changed(self, value: float):
+        aspect = float(value)
+        self.aspect_slider.blockSignals(True)
+        self.aspect_slider.setValue(int(round(aspect * 100)))
+        self.aspect_slider.blockSignals(False)
+        self._apply_aspect(aspect)
+
+    def _apply_aspect(self, aspect: float):
         self.state.config.geometry_cross_section_aspect = aspect
         self._queue_geometry()
 
@@ -338,6 +362,14 @@ class DesignTab(QWidget):
         a.roughness = self.roughness.value() / 100.0
         a.metalness = self.metalness.value() / 100.0
         a.bump_intensity = self.bump.value() / 100.0
+        # Push uniforms straight to the shader for instant feedback —
+        # the appearance_changed signal handler also does it but routing
+        # directly avoids one signal hop.
+        self.preview.set_pbr(
+            roughness=a.roughness,
+            metalness=a.metalness,
+            bump_intensity=a.bump_intensity,
+        )
         self.state.appearance_changed.emit()
 
     def _pick_color(self):
@@ -366,6 +398,7 @@ class DesignTab(QWidget):
 
     def _pattern_changed(self, text: str):
         self.state.config.appearance.bump_pattern = text
+        self.preview.set_pbr(bump_pattern=text)
         self.state.appearance_changed.emit()
 
     # ------------------------------------------------------------------
@@ -444,8 +477,14 @@ class DesignTab(QWidget):
 
     def _on_mesh(self, mesh):
         a = self.state.config.appearance
-        self.preview.set_mesh(mesh, color_hex=a.color_hex,
-                              roughness=a.roughness, metalness=a.metalness)
+        self.preview.set_mesh(
+            mesh,
+            color_hex=a.color_hex,
+            roughness=a.roughness,
+            metalness=a.metalness,
+            bump_intensity=a.bump_intensity,
+            bump_pattern=a.bump_pattern,
+        )
         self._apply_background()
         self.stats_label.setText(
             f"mesh:  {mesh.triangle_count():,} triangles   ·   "
@@ -453,7 +492,14 @@ class DesignTab(QWidget):
         )
 
     def _on_appearance_changed(self):
-        self.preview.set_color(self.state.config.appearance.color_hex)
+        a = self.state.config.appearance
+        self.preview.set_color(a.color_hex)
+        self.preview.set_pbr(
+            roughness=a.roughness,
+            metalness=a.metalness,
+            bump_intensity=a.bump_intensity,
+            bump_pattern=a.bump_pattern,
+        )
         self._apply_background()
 
     # ------------------------------------------------------------------

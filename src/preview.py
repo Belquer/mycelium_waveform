@@ -1,24 +1,36 @@
 """
-voice-to-form  —  src/preview.py  v0.4.0
+voice-to-form  —  src/preview.py  v0.6.0
 
-3D viewport for the GUI.  Built on pyqtgraph.opengl (which wraps
-PyOpenGL) — gives us interactive rotate/zoom for free and keeps the
-dependency surface small.
+3D viewport for the GUI.
+
+v0.6.0 — registers a custom GLSL shader (`voice_to_form_pbr`) so the
+Surface sliders on the Design tab actually affect the render:
+
+  * Ambient + wrap diffuse make the base colour visible across the
+    whole form — no more black-on-black for dark mesh colours.
+  * Roughness controls specular tightness (low = sharp glossy hot-
+    spot, high = broad matte).
+  * Metalness tints the specular by the base colour and damps the
+    diffuse contribution (rough approximation, not full Cook-Torrance).
+  * Bump intensity perturbs the surface normal in the fragment
+    shader.
+  * Bump pattern picks the noise function (smooth / sandblasted /
+    beadblasted / brushed / layered-FDM / porous / woven /
+    mycelium-colonized).
+
+`set_pbr()` writes the uniforms directly on the registered
+ShaderProgram and requests a redraw — uniforms re-bind on the next
+paint.
 
 v0.4.0:
-  - Default background is a light studio white (matches the new
-    AppearanceParams default).
-  - **Shift + trackpad scroll** rotates the sculpture around its long
-    (X) axis, so trackpad users can spin the form like a rotisserie
-    to inspect top/bottom asymmetry without click-dragging the
-    camera orbit.
-
-v0.3.0 — adjustable background colour via config.
-v0.2.0 — `set_color()` / `set_background()` update live.
+  - Shift + trackpad scroll spins the displayed mesh around its X
+    axis (long-axis "rotisserie" view).
+  - Light-coloured DEFAULT_BG so the viewport doesn't blink dark at
+    startup.
 """
 from __future__ import annotations
 
-__version__ = "0.4.0"
+__version__ = "0.6.0"
 
 import sys
 from typing import Optional
@@ -31,23 +43,214 @@ print(f"[voice-to-form] preview.py v{__version__}", file=sys.stderr)
 
 
 # How many degrees of long-axis spin per unit of trackpad/wheel
-# angleDelta().y().  120 units = one mouse-wheel "click" on most
-# systems; on macOS trackpads each pixel reports ~4 units.  0.15 ° /
-# unit means a full mouse-wheel notch is 18° and a normal trackpad
-# swipe feels like ~30–60° per gesture.  Tune if needed.
+# angleDelta().y().
 SPIN_DEG_PER_UNIT = 0.15
 
+
+# Bump-pattern → integer the fragment shader switches on.  Kept here so
+# the GUI and the shader stay in lock-step.
+BUMP_PATTERN_INDEX: dict[str, int] = {
+    "smooth": 0,
+    "sandblasted": 1,
+    "beadblasted": 2,
+    "brushed": 3,
+    "layered (FDM)": 4,
+    "porous (SLS)": 5,
+    "woven (carbon)": 6,
+    "mycelium-colonized": 7,
+}
+
+
+# --------------------------------------------------------------------------
+# Custom GLSL — phong-ish with bump perturbation
+# --------------------------------------------------------------------------
+# Kept to GLSL 1.20 / compatibility profile because that's what pyqtgraph's
+# fixed-pipeline pipeline expects (gl_NormalMatrix, gl_Color, ftransform).
+
+_VERTEX_SRC = """
+varying vec3 v_normal;
+varying vec3 v_view_pos;
+varying vec3 v_obj_pos;
+
+void main() {
+    v_normal = normalize(gl_NormalMatrix * gl_Normal);
+    vec4 mv = gl_ModelViewMatrix * gl_Vertex;
+    v_view_pos = mv.xyz;
+    v_obj_pos = gl_Vertex.xyz;
+    gl_FrontColor = gl_Color;
+    gl_BackColor = gl_Color;
+    gl_Position = ftransform();
+}
+"""
+
+_FRAGMENT_SRC = """
+uniform float u_roughness;
+uniform float u_metalness;
+uniform float u_bump_intensity;
+uniform int   u_bump_pattern;
+uniform float u_ambient;
+
+varying vec3 v_normal;
+varying vec3 v_view_pos;
+varying vec3 v_obj_pos;
+
+float hash11(float n) {
+    return fract(sin(n) * 43758.5453);
+}
+float hash13(vec3 p) {
+    return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+}
+
+float value_noise(vec3 p) {
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float n000 = hash13(i + vec3(0.0, 0.0, 0.0));
+    float n100 = hash13(i + vec3(1.0, 0.0, 0.0));
+    float n010 = hash13(i + vec3(0.0, 1.0, 0.0));
+    float n110 = hash13(i + vec3(1.0, 1.0, 0.0));
+    float n001 = hash13(i + vec3(0.0, 0.0, 1.0));
+    float n101 = hash13(i + vec3(1.0, 0.0, 1.0));
+    float n011 = hash13(i + vec3(0.0, 1.0, 1.0));
+    float n111 = hash13(i + vec3(1.0, 1.0, 1.0));
+    float nx00 = mix(n000, n100, f.x);
+    float nx10 = mix(n010, n110, f.x);
+    float nx01 = mix(n001, n101, f.x);
+    float nx11 = mix(n011, n111, f.x);
+    float nxy0 = mix(nx00, nx10, f.y);
+    float nxy1 = mix(nx01, nx11, f.y);
+    return mix(nxy0, nxy1, f.z);
+}
+
+vec3 perturb_normal(vec3 N, vec3 P, int pattern, float intensity) {
+    if (pattern == 0 || intensity <= 0.0001) return N;
+    vec3 dN = vec3(0.0);
+
+    if (pattern == 1) {
+        // sandblasted — high-freq random
+        dN = vec3(
+            value_noise(P * 8.0) - 0.5,
+            value_noise(P * 8.0 + vec3(17.0)) - 0.5,
+            value_noise(P * 8.0 + vec3(31.0)) - 0.5
+        );
+    } else if (pattern == 2) {
+        // beadblasted — finer & rounder
+        dN = vec3(
+            value_noise(P * 18.0) - 0.5,
+            value_noise(P * 18.0 + vec3(11.0)) - 0.5,
+            value_noise(P * 18.0 + vec3(23.0)) - 0.5
+        ) * 0.7;
+    } else if (pattern == 3) {
+        // brushed — directional (along the form's X)
+        float s = sin(P.y * 70.0 + value_noise(P * 0.5) * 6.0) * 0.5;
+        dN = vec3(0.0, s, 0.0);
+    } else if (pattern == 4) {
+        // layered FDM — horizontal print lines along Y
+        float layer = sin(P.y * 12.0) * 0.5;
+        dN = vec3(0.0, layer, 0.0);
+    } else if (pattern == 5) {
+        // porous — large lo-freq pits
+        dN = vec3(
+            value_noise(P * 3.0) - 0.5,
+            value_noise(P * 3.0 + vec3(7.0)) - 0.5,
+            value_noise(P * 3.0 + vec3(13.0)) - 0.5
+        );
+    } else if (pattern == 6) {
+        // woven — crossing sine grid
+        dN = vec3(
+            sin(P.x * 14.0) * 0.4,
+            sin(P.z * 14.0) * 0.4,
+            0.0
+        );
+    } else if (pattern == 7) {
+        // mycelium-colonized — fractal noise
+        float n = value_noise(P * 2.0)
+                + 0.5 * value_noise(P * 4.0)
+                + 0.25 * value_noise(P * 8.0);
+        dN = vec3(
+            value_noise(P * 2.0 + vec3(0.0, 0.0, n)) - 0.5,
+            value_noise(P * 2.0 + vec3(0.0, n, 0.0)) - 0.5,
+            value_noise(P * 2.0 + vec3(n, 0.0, 0.0)) - 0.5
+        );
+    }
+    return normalize(N + dN * intensity * 0.6);
+}
+
+void main() {
+    vec3 N = normalize(v_normal);
+    N = perturb_normal(N, v_obj_pos * 0.025, u_bump_pattern, u_bump_intensity);
+
+    // Fixed key light in view space — feels stable as the user orbits.
+    vec3 L = normalize(vec3(0.35, 0.55, 0.75));
+    vec3 V = normalize(-v_view_pos);
+    vec3 H = normalize(L + V);
+
+    float NdotL = max(dot(N, L), 0.0);
+    // Wrap diffuse: shadowed side keeps some colour, never pitch black.
+    float wrap = (NdotL + 0.35) / 1.35;
+
+    float NdotH = max(dot(N, H), 0.0);
+    // Roughness → specular exponent (sharp ↔ broad).
+    float shininess = mix(4.0, 256.0, 1.0 - clamp(u_roughness, 0.0, 1.0));
+    float spec = pow(NdotH, shininess);
+    // High roughness damps the highlight; low roughness keeps it punchy.
+    spec *= mix(1.0, 0.05, clamp(u_roughness, 0.0, 1.0));
+
+    vec3 base = gl_Color.rgb;
+    // Metals tint the specular with the base colour; dielectrics get white spec.
+    vec3 spec_tint = mix(vec3(1.0), base, clamp(u_metalness, 0.0, 1.0));
+    // Metals shed diffuse — most of their reflection is specular.
+    vec3 diffuse_color = mix(base, base * 0.15, clamp(u_metalness, 0.0, 1.0));
+
+    vec3 color = u_ambient * base
+               + wrap * diffuse_color
+               + spec * spec_tint;
+    gl_FragColor = vec4(color, gl_Color.a);
+}
+"""
+
+
+_PBR_SHADER_NAME = "voice_to_form_pbr"
+
+
+def _register_pbr_shader():
+    """Register the custom shader on pyqtgraph's global Shaders list (idempotent)."""
+    import pyqtgraph.opengl.shaders as shaders
+    for sp in shaders.Shaders:
+        if getattr(sp, "name", None) == _PBR_SHADER_NAME:
+            return sp
+    sp = shaders.ShaderProgram(
+        _PBR_SHADER_NAME,
+        [
+            shaders.VertexShader(_VERTEX_SRC),
+            shaders.FragmentShader(_FRAGMENT_SRC),
+        ],
+        uniforms={
+            "u_roughness": 0.5,
+            "u_metalness": 0.0,
+            "u_bump_intensity": 0.0,
+            "u_bump_pattern": 0,
+            "u_ambient": 0.25,
+        },
+    )
+    shaders.Shaders.append(sp)
+    return sp
+
+
+# --------------------------------------------------------------------------
+# PreviewWidget
+# --------------------------------------------------------------------------
 
 class PreviewWidget:
     """Thin wrapper around pyqtgraph.opengl.GLViewWidget."""
 
-    # Light studio-white default so the viewport doesn't blink dark at
-    # startup before the configured background applies.
     DEFAULT_BG_RGB = (245, 245, 245)
 
     def __init__(self):
         import pyqtgraph.opengl as gl
         self.gl = gl
+        self._pbr_shader = _register_pbr_shader()
+
         self.view = _SpinningGLView(self)
         self.view.setBackgroundColor(self.DEFAULT_BG_RGB)
         self.view.setCameraPosition(distance=380, elevation=12, azimuth=45)
@@ -61,13 +264,17 @@ class PreviewWidget:
 
     # ----------------------------------------------------------------------
 
-    def set_mesh(self, mesh: Mesh, color_hex: str = "#a8acb1",
-                 roughness: float = 0.7, metalness: float = 0.0) -> None:
-        """Replace the displayed mesh."""
+    def set_mesh(
+        self,
+        mesh: Mesh,
+        color_hex: str = "#a8acb1",
+        roughness: float = 0.5,
+        metalness: float = 0.0,
+        bump_intensity: float = 0.0,
+        bump_pattern: int | str = 0,
+    ) -> None:
         verts = mesh.vertices.astype(np.float32)
         faces = mesh.faces.astype(np.int32)
-
-        # Centre the form at the origin so the camera orbit feels right.
         center = verts.mean(axis=0)
         verts = verts - center
 
@@ -78,19 +285,23 @@ class PreviewWidget:
             self._mesh_item = None
 
         mesh_data = self.gl.MeshData(vertexes=verts, faces=faces)
-        # shader='shaded' gives diffuse + ambient + specular.  Metalness
-        # and roughness map onto specular intensity in v0.2; full PBR
-        # in v0.4+.
         self._mesh_item = self.gl.GLMeshItem(
             meshdata=mesh_data,
             smooth=True,
             color=color,
-            shader="shaded",
+            shader=_PBR_SHADER_NAME,
             glOptions="opaque",
         )
         self.view.addItem(self._mesh_item)
 
-        # Fit camera to form size.
+        # Apply the appearance state to the freshly-registered mesh.
+        self.set_pbr(
+            roughness=roughness,
+            metalness=metalness,
+            bump_intensity=bump_intensity,
+            bump_pattern=bump_pattern,
+        )
+
         extents = verts.max(axis=0) - verts.min(axis=0)
         diag = float(np.linalg.norm(extents))
         self.view.setCameraPosition(distance=max(300.0, diag * 1.4))
@@ -103,14 +314,12 @@ class PreviewWidget:
     # ----------------------------------------------------------------------
 
     def set_color(self, color_hex: str) -> None:
-        """Update the mesh colour live, without rebuilding the geometry."""
         if self._mesh_item is None:
             return
         rgba = _hex_to_rgba(color_hex)
         try:
             self._mesh_item.setColor(rgba)
         except Exception:
-            # Older pyqtgraph: poke the option directly and trigger a redraw.
             self._mesh_item.opts["color"] = rgba
             self._mesh_item.update()
 
@@ -118,21 +327,41 @@ class PreviewWidget:
         r, g, b = _hex_to_rgb_255(color_hex)
         self.view.setBackgroundColor((r, g, b))
 
-    # ----------------------------------------------------------------------
-    # Long-axis spin (called from _SpinningGLView's wheelEvent override)
+    def set_pbr(
+        self,
+        roughness: float | None = None,
+        metalness: float | None = None,
+        bump_intensity: float | None = None,
+        bump_pattern: int | str | None = None,
+    ) -> None:
+        """Update PBR uniforms on the shared shader.
+
+        The uniforms re-bind on the next paint — call view.update() to
+        trigger a redraw immediately.
+        """
+        u = self._pbr_shader.uniforms
+        if roughness is not None:
+            u["u_roughness"] = float(roughness)
+        if metalness is not None:
+            u["u_metalness"] = float(metalness)
+        if bump_intensity is not None:
+            u["u_bump_intensity"] = float(bump_intensity)
+        if bump_pattern is not None:
+            if isinstance(bump_pattern, str):
+                bump_pattern = BUMP_PATTERN_INDEX.get(bump_pattern, 0)
+            u["u_bump_pattern"] = int(bump_pattern)
+        if self._mesh_item is not None:
+            self._mesh_item.update()
+        try:
+            self.view.update()
+        except Exception:
+            pass
+
     # ----------------------------------------------------------------------
 
     def spin_long_axis(self, deg: float) -> None:
-        """Rotate the displayed mesh by `deg` degrees around the X axis.
-
-        Called from Shift+wheel events.  Acts on the mesh item, not the
-        camera, so the orbit / pan controls keep working independently.
-        """
         if self._mesh_item is None or deg == 0.0:
             return
-        # GLMeshItem.rotate(angle, x, y, z) rotates around the world axis.
-        # Since the mesh is centred at origin by set_mesh(), this rotates
-        # around the form's centroid — visually the long-axis spin.
         self._mesh_item.rotate(float(deg), 1.0, 0.0, 0.0)
 
     # ----------------------------------------------------------------------
@@ -152,11 +381,6 @@ class PreviewWidget:
 # --------------------------------------------------------------------------
 
 def _make_spinning_view_class():
-    """Return the GLViewWidget subclass.
-
-    Lazy import so this module is importable without a Qt display in
-    tests / CLI mode.
-    """
     import pyqtgraph.opengl as gl
     from PyQt6.QtCore import Qt
 
@@ -165,12 +389,10 @@ def _make_spinning_view_class():
             super().__init__()
             self._owner = owner
 
-        def wheelEvent(self, ev):  # noqa: N802 (Qt camelCase override)
+        def wheelEvent(self, ev):  # noqa: N802
             mods = ev.modifiers()
             if mods & Qt.KeyboardModifier.ShiftModifier:
                 ad = ev.angleDelta()
-                # Trackpad scroll on macOS reports y deltas; mouse-wheel
-                # also fills y.  We use y so vertical swipe → spin.
                 delta = ad.y() or ad.x()
                 if delta:
                     self._owner.spin_long_axis(delta * SPIN_DEG_PER_UNIT)
@@ -181,8 +403,6 @@ def _make_spinning_view_class():
     return _SpinningGLView
 
 
-# Placeholder until first PreviewWidget is constructed (real class is
-# resolved lazily via _make_spinning_view_class()).
 class _SpinningGLView:  # type: ignore[no-redef]
     _real_cls = None
 

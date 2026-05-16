@@ -4,8 +4,9 @@ A macOS desktop app that turns short voice recordings into 3D-printable
 sculptural objects.  Single-user tool for one artist's sculptural
 practice (the mycelium-waveform project).
 
-Version: **v0.5.0** — side-by-side Input/Output, trim-silence
-toggle (default OFF), mono-channel spinbox correctly disables.
+Version: **v0.6.0** — custom GLSL shader: surface sliders
+(roughness / metalness / bump / pattern) actually render, base
+colour is visible across the form, aspect is editable.
 
 > _Every source file prints its own version on import, so the boot log
 > shows exactly which build is running. See "Versioning" at the
@@ -279,7 +280,7 @@ Per the project rules: every source file carries a semantic version
 and prints it on import.  Current file versions:
 
 ```
-main.py                       v0.5.0   (--version banner)
+main.py                       v0.6.0   (--version banner)
 src/audio.py                  v0.4.0   (Player, list_output_devices)
 src/geometry.py               v0.3.0   (cross_section_aspect)
 src/profiles.py               v0.1.0
@@ -288,12 +289,12 @@ src/decimation.py             v0.1.0
 src/overlay.py                v0.1.0
 src/config.py                 v0.5.0   (trim_silence_enabled default OFF)
 src/library.py                v0.1.0
-src/preview.py                v0.4.0   (Shift+wheel long-axis spin)
+src/preview.py                v0.6.0   (custom GLSL shader, set_pbr)
 src/gui/state.py              v0.5.0   (load_source honours trim toggle)
 src/gui/main_window.py        v0.3.0   (4-tab layout, Design combined)
 src/gui/tab_input.py          v0.5.0   (2-column layout, trim toggle,
                                         mono-channel disable fix)
-src/gui/tab_geometry.py       v0.3.0   (Design tab: geometry+appearance)
+src/gui/tab_geometry.py       v0.6.0   (editable aspect, wired PBR)
 src/gui/tab_verify.py         v0.1.0
 src/gui/tab_export.py         v0.1.0
 voice-to-form.command         v0.2.0   (combined setup+run)
@@ -313,6 +314,23 @@ Run `python main.py --version` to print every module's banner.
 ---
 
 ## Version history
+
+**v0.6.0:**
+
+- **Custom GLSL shader** (`voice_to_form_pbr`) replaces pyqtgraph's
+  built-in `shaded`.  Adds an ambient term + wrap diffuse so the
+  base colour stays visible everywhere — no more black-on-black
+  for dark forms.  All four surface sliders now affect the render:
+  - **Roughness** controls the specular exponent (sharp ↔ broad).
+  - **Metalness** tints the highlight by the base colour and damps
+    the diffuse contribution.
+  - **Bump intensity** perturbs the surface normal in the fragment.
+  - **Bump pattern** picks the noise function (sandblasted /
+    beadblasted / brushed / layered-FDM / porous / woven /
+    mycelium-colonized).
+- **Aspect is editable.**  The Design tab's aspect control now has
+  a `QDoubleSpinBox` alongside the slider, two-way synced — type
+  `0.43` directly if that's the value you want.
 
 **v0.5.0:**
 
