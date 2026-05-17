@@ -1,5 +1,5 @@
 """
-voice-to-form  —  src/gui/tab_geometry.py  v0.7.5
+voice-to-form  —  src/gui/tab_geometry.py  v0.7.6
 
 Design tab — geometry + appearance combined.
 
@@ -38,7 +38,7 @@ v0.6.0:
 """
 from __future__ import annotations
 
-__version__ = "0.7.5"
+__version__ = "0.7.6"
 
 import sys
 
@@ -48,7 +48,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QDoubleSpinBox, QSpinBox,
     QGroupBox, QFormLayout, QSplitter, QScrollArea, QPushButton, QLineEdit,
     QColorDialog, QSlider, QComboBox, QGridLayout, QSizePolicy,
-    QInputDialog, QMessageBox,
+    QInputDialog, QMessageBox, QCheckBox,
 )
 
 from .state import AppState
