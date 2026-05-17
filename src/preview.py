@@ -1,7 +1,13 @@
 """
-voice-to-form  —  src/preview.py  v0.7.3
+voice-to-form  —  src/preview.py  v0.7.5
 
 3D viewport for the GUI.
+
+v0.7.5 — punchier spec + Fresnel-Schlick edge term so the new
+binary Rough/Metal toggles in the Design tab actually look like
+a mirror when Rough=OFF + Metal=ON.  Edge brightness is also
+boosted on metals via Fresnel — the form glows at glancing angles
+like a real reflective surface.
 
 v0.7.3 — set_mesh no longer auto-fits the camera every call.
 Previous behaviour: every parameter tweak rebuilt the mesh and
@@ -65,7 +71,7 @@ v0.4.0:
 """
 from __future__ import annotations
 
-__version__ = "0.7.3"
+__version__ = "0.7.5"
 
 import os
 import sys
@@ -239,25 +245,42 @@ void main() {
     vec3 H = normalize(L + V);
 
     float NdotL = max(dot(N, L), 0.0);
+    float NdotV = max(dot(N, V), 0.0);
+    float NdotH = max(dot(N, H), 0.0);
+
+    float r = clamp(u_roughness, 0.0, 1.0);
+    float m = clamp(u_metalness, 0.0, 1.0);
+
     // Wrap diffuse: shadowed side keeps some colour, never pitch black.
     float wrap = (NdotL + 0.35) / 1.35;
 
-    float NdotH = max(dot(N, H), 0.0);
-    // Roughness → specular exponent (sharp ↔ broad).
-    float shininess = mix(4.0, 256.0, 1.0 - clamp(u_roughness, 0.0, 1.0));
-    float spec = pow(NdotH, shininess);
-    // High roughness damps the highlight; low roughness keeps it punchy.
-    spec *= mix(1.0, 0.05, clamp(u_roughness, 0.0, 1.0));
+    // Roughness → specular exponent (sharp ↔ broad).  Wider range +
+    // bigger gain at low roughness so the "mirror" toggle reads as
+    // a real mirror, not a polite gloss.
+    float shininess = mix(8.0, 512.0, 1.0 - r);
+    float spec_pow = pow(NdotH, shininess);
+    float spec_gain = mix(4.0, 0.05, r);
+    float spec = spec_pow * spec_gain;
 
     vec3 base = v_color.rgb;
-    // Metals tint the specular with the base colour; dielectrics get white spec.
-    vec3 spec_tint = mix(vec3(1.0), base, clamp(u_metalness, 0.0, 1.0));
+
+    // Fresnel-Schlick: dielectrics reflect ~4% at normal incidence,
+    // metals reflect their base colour.  At glancing angles both
+    // reflect ~100% — that's the "edge glow" you see on chrome.
+    vec3 F0 = mix(vec3(0.04), base, m);
+    vec3 fresnel = F0 + (vec3(1.0) - F0) * pow(1.0 - NdotV, 5.0);
+
+    // Specular colour = Fresnel response × highlight intensity.
+    vec3 spec_color = fresnel * spec;
+
     // Metals shed diffuse — most of their reflection is specular.
-    vec3 diffuse_color = mix(base, base * 0.15, clamp(u_metalness, 0.0, 1.0));
+    // Mix in (1 - fresnel) so high-Fresnel angles get less diffuse
+    // (energy conservation, loosely).
+    vec3 diffuse_color = mix(base, base * 0.10, m) * (vec3(1.0) - fresnel);
 
     vec3 color = u_ambient * base
                + wrap * diffuse_color
-               + spec * spec_tint;
+               + spec_color;
     gl_FragColor = vec4(color, v_color.a);
 }
 """

@@ -1,5 +1,5 @@
 """
-voice-to-form  —  src/gui/tab_geometry.py  v0.7.4
+voice-to-form  —  src/gui/tab_geometry.py  v0.7.5
 
 Design tab — geometry + appearance combined.
 
@@ -38,7 +38,7 @@ v0.6.0:
 """
 from __future__ import annotations
 
-__version__ = "0.7.4"
+__version__ = "0.7.5"
 
 import sys
 
@@ -326,27 +326,43 @@ class DesignTab(QWidget):
             grid.addWidget(btn, i // 3, i % 3)
         outer.addLayout(grid)
 
-        # Sliders
+        # Roughness / Metalness are binary toggles — four useful combos:
+        #   ☐ Rough  ☐ Metal  → glossy paint    (sharp white highlight)
+        #   ☑ Rough  ☐ Metal  → matte paint     (no highlight)
+        #   ☐ Rough  ☑ Metal  → mirror metal    (sharp base-tinted highlight)
+        #   ☑ Rough  ☑ Metal  → brushed metal   (soft base-tinted highlight)
         slider_form = QFormLayout()
-        self.roughness = self._slider(cfg.appearance.roughness)
-        self.roughness.setToolTip(
-            "Specular sharpness.  0 = mirror-sharp highlight; "
-            "1 = matte, no highlight."
+
+        self.rough_check = QCheckBox()
+        self.rough_check.setChecked(cfg.appearance.roughness >= 0.5)
+        self.rough_check.setToolTip(
+            "Matte vs glossy.  Off = sharp highlight (mirror / gloss).  "
+            "On = no highlight (matte)."
         )
-        self.metalness = self._slider(cfg.appearance.metalness)
-        self.metalness.setToolTip(
-            "Blends from painted (0) to metal (1).  At 0 the highlight "
-            "is white (paint / plastic).  At 1 the highlight takes the "
-            "base colour and the diffuse drops — polished metal of that "
-            "tint.  Pair with low roughness for a mirror, high roughness "
-            "for brushed metal."
+        self.rough_check.toggled.connect(self._rough_toggled)
+
+        self.metal_check = QCheckBox()
+        self.metal_check.setChecked(cfg.appearance.metalness >= 0.5)
+        self.metal_check.setToolTip(
+            "Painted vs metal.  Off = white highlight on coloured base "
+            "(paint / plastic).  On = highlight takes the base colour, "
+            "diffuse fades — polished metal of that tint.  Combine with "
+            "Rough off for a mirror, Rough on for brushed metal."
         )
+        self.metal_check.toggled.connect(self._metal_toggled)
+
+        # Keep the same attribute names the preset-apply code already
+        # writes to, but make them None — _apply_preset's helper that
+        # calls .setValue() will skip None safely (see _apply_preset).
+        self.roughness = None
+        self.metalness = None
+
         self.bump = self._slider(cfg.appearance.bump_intensity)
         self.bump.setToolTip(
             "Strength of the procedural surface relief picked below."
         )
-        slider_form.addRow("Roughness", self.roughness)
-        slider_form.addRow("Metalness", self.metalness)
+        slider_form.addRow("Rough", self.rough_check)
+        slider_form.addRow("Metal", self.metal_check)
         slider_form.addRow("Bump", self.bump)
 
         self.pattern_combo = QComboBox()
@@ -604,10 +620,16 @@ class DesignTab(QWidget):
         _set(self.gamma_box, preset.gamma)
         _set(self.aspect_slider, int(round(preset.cross_section_aspect * 100)))
         _set(self.aspect_spin, preset.cross_section_aspect)
-        _set(self.roughness, int(round(preset.roughness * 100)))
-        _set(self.metalness, int(round(preset.metalness * 100)))
         _set(self.bump, int(round(preset.bump_intensity * 100)))
         _set(self.bg_brightness, 50)
+
+        # Rough/Metal are checkboxes — use setChecked, not setValue.
+        self.rough_check.blockSignals(True)
+        self.rough_check.setChecked(preset.roughness >= 0.5)
+        self.rough_check.blockSignals(False)
+        self.metal_check.blockSignals(True)
+        self.metal_check.setChecked(preset.metalness >= 0.5)
+        self.metal_check.blockSignals(False)
 
         self.pattern_combo.blockSignals(True)
         self.pattern_combo.setCurrentText(preset.bump_pattern)
@@ -773,18 +795,23 @@ class DesignTab(QWidget):
         return s
 
     def _save_pbr_sliders(self):
+        # Called by the bump slider only (rough/metal are checkboxes
+        # with their own handlers).
         a = self.state.config.appearance
-        a.roughness = self.roughness.value() / 100.0
-        a.metalness = self.metalness.value() / 100.0
         a.bump_intensity = self.bump.value() / 100.0
-        # Push uniforms straight to the shader for instant feedback —
-        # the appearance_changed signal handler also does it but routing
-        # directly avoids one signal hop.
-        self.preview.set_pbr(
-            roughness=a.roughness,
-            metalness=a.metalness,
-            bump_intensity=a.bump_intensity,
-        )
+        self.preview.set_pbr(bump_intensity=a.bump_intensity)
+        self.state.appearance_changed.emit()
+
+    def _rough_toggled(self, checked: bool):
+        a = self.state.config.appearance
+        a.roughness = 1.0 if checked else 0.0
+        self.preview.set_pbr(roughness=a.roughness)
+        self.state.appearance_changed.emit()
+
+    def _metal_toggled(self, checked: bool):
+        a = self.state.config.appearance
+        a.metalness = 1.0 if checked else 0.0
+        self.preview.set_pbr(metalness=a.metalness)
         self.state.appearance_changed.emit()
 
     def _pick_color(self):
