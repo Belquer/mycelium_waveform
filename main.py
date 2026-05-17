@@ -1,5 +1,5 @@
 """
-voice-to-form  —  main.py  v0.7.2
+voice-to-form  —  main.py  v0.7.3
 
 GUI entry point.  Also doubles as a tiny CLI:
 

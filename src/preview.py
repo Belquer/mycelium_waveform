@@ -1,7 +1,15 @@
 """
-voice-to-form  —  src/preview.py  v0.7.1
+voice-to-form  —  src/preview.py  v0.7.3
 
 3D viewport for the GUI.
+
+v0.7.3 — set_mesh no longer auto-fits the camera every call.
+Previous behaviour: every parameter tweak rebuilt the mesh and
+reset the camera distance, which made Length (and audio
+smoothing) appear to do nothing — the form just grew/shrank and
+the camera scaled to keep visible size constant.  Now set_mesh
+preserves the camera state; the caller decides when to refit
+via the new `fit_view()` method.
 
 v0.7.1 — fixes the silent "no mesh rendered" failure on macOS.
 The custom shader was using legacy GLSL builtins (gl_Vertex,
@@ -57,7 +65,7 @@ v0.4.0:
 """
 from __future__ import annotations
 
-__version__ = "0.7.1"
+__version__ = "0.7.3"
 
 import os
 import sys
@@ -326,6 +334,9 @@ class PreviewWidget:
 
         self._mesh_item = None
         self._axis_item = None
+        # Cached recentred vertices so `fit_view()` can refit without
+        # the caller having to hand us the mesh again.
+        self._last_verts: Optional[np.ndarray] = None
         self._add_axis()
 
     @property
@@ -395,9 +406,13 @@ class PreviewWidget:
             bump_pattern=bump_pattern,
         )
 
-        extents = verts.max(axis=0) - verts.min(axis=0)
-        diag = float(np.linalg.norm(extents))
-        self.view.setCameraPosition(distance=max(300.0, diag * 1.4))
+        # Cache verts so `fit_view()` can refit without rebuilding the
+        # mesh.  We intentionally do NOT touch the camera here —
+        # parameter sliders should change the *form* on screen, not
+        # cancel the user's zoom.  Caller (DesignTab) calls fit_view()
+        # at the moments where refit is wanted (first show, fresh
+        # audio load, explicit user request).
+        self._last_verts = verts
 
     def clear(self) -> None:
         if self._mesh_item is not None:
@@ -456,6 +471,15 @@ class PreviewWidget:
             pass
 
     # ----------------------------------------------------------------------
+
+    def fit_view(self) -> None:
+        """Reframe the camera to fit the current mesh's extents."""
+        verts = self._last_verts
+        if verts is None or verts.size == 0:
+            return
+        extents = verts.max(axis=0) - verts.min(axis=0)
+        diag = float(np.linalg.norm(extents))
+        self.view.setCameraPosition(distance=max(300.0, diag * 1.4))
 
     def spin_long_axis(self, deg: float) -> None:
         if self._mesh_item is None or deg == 0.0:

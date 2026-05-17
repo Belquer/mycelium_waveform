@@ -1,7 +1,13 @@
 """
-voice-to-form  —  src/gui/tab_geometry.py  v0.7.0
+voice-to-form  —  src/gui/tab_geometry.py  v0.7.3
 
 Design tab — geometry + appearance combined.
+
+v0.7.3 — explicit camera-fit control.  set_mesh no longer reframes
+the camera on every rebuild, so dimension and audio-smoothing
+sliders now actually look like they're changing the form's size.
+The camera refits only on the first mesh, on a fresh audio load,
+on Fit-view button press, or on F keyboard shortcut.
 
 v0.7.0 — design presets.  Named bundles of geometry + appearance +
 audio-smoothing settings.  Built-ins ship with the app (polished
@@ -32,12 +38,12 @@ v0.6.0:
 """
 from __future__ import annotations
 
-__version__ = "0.7.0"
+__version__ = "0.7.3"
 
 import sys
 
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QShortcut, QKeySequence
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QDoubleSpinBox, QSpinBox,
     QGroupBox, QFormLayout, QSplitter, QScrollArea, QPushButton, QLineEdit,
@@ -72,10 +78,22 @@ class DesignTab(QWidget):
         self._geom_debounce.setInterval(120)
         self._geom_debounce.timeout.connect(self._apply_geometry_params)
 
+        # Refit the camera at well-defined moments:
+        #   - the first time anything is rendered (placeholder)
+        #   - when a fresh audio source is loaded
+        # Parameter tweaks (length, aspect, smoothing, …) preserve
+        # the user's current zoom so the form visibly changes size.
+        self._pending_fit = True
+
         self._build_ui()
 
         state.mesh_changed.connect(self._on_mesh)
         state.appearance_changed.connect(self._on_appearance_changed)
+        state.audio_loaded.connect(self._on_audio_loaded)
+
+        # F = fit view, anywhere in the Design tab.
+        fit_shortcut = QShortcut(QKeySequence("F"), self)
+        fit_shortcut.activated.connect(self._fit_view_now)
 
         # Apply the initial background so the viewport already reflects
         # the configured scene.
@@ -130,7 +148,20 @@ class DesignTab(QWidget):
         right = QWidget()
         rlay = QVBoxLayout(right)
         rlay.setContentsMargins(0, 0, 0, 0)
-        rlay.addWidget(self.preview.widget())
+        rlay.setSpacing(2)
+
+        # Thin toolbar above the viewport.  Today: just "Fit view";
+        # room for export-PNG / lock-camera in v0.8.
+        toolbar = QHBoxLayout()
+        toolbar.setContentsMargins(6, 4, 6, 0)
+        self.fit_btn = QPushButton("Fit view")
+        self.fit_btn.setToolTip("Reframe the camera to fit the current mesh (F)")
+        self.fit_btn.clicked.connect(self._fit_view_now)
+        toolbar.addWidget(self.fit_btn)
+        toolbar.addStretch()
+        rlay.addLayout(toolbar)
+
+        rlay.addWidget(self.preview.widget(), stretch=1)
 
         splitter.addWidget(scroll)
         splitter.addWidget(right)
@@ -647,6 +678,7 @@ class DesignTab(QWidget):
             bump_intensity=a.bump_intensity,
             bump_pattern=a.bump_pattern,
         )
+        self._maybe_fit()
         self.stats_label.setText(
             "placeholder shape — load or record audio to generate the real form "
             f"(showing {mesh.triangle_count():,} triangles)"
@@ -844,10 +876,24 @@ class DesignTab(QWidget):
             bump_pattern=a.bump_pattern,
         )
         self._apply_background()
+        self._maybe_fit()
         self.stats_label.setText(
             f"mesh:  {mesh.triangle_count():,} triangles   ·   "
             f"{mesh.vertex_count():,} vertices"
         )
+
+    def _on_audio_loaded(self, *_):
+        # Fresh source → refit on the next mesh paint.
+        self._pending_fit = True
+
+    def _maybe_fit(self):
+        if self._pending_fit:
+            self.preview.fit_view()
+            self._pending_fit = False
+
+    def _fit_view_now(self):
+        self.preview.fit_view()
+        self._pending_fit = False
 
     def _on_appearance_changed(self):
         a = self.state.config.appearance
