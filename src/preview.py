@@ -1,13 +1,20 @@
 """
-voice-to-form  —  src/preview.py  v0.7.5
+voice-to-form  —  src/preview.py  v0.7.7
 
 3D viewport for the GUI.
 
-v0.7.5 — punchier spec + Fresnel-Schlick edge term so the new
-binary Rough/Metal toggles in the Design tab actually look like
-a mirror when Rough=OFF + Metal=ON.  Edge brightness is also
-boosted on metals via Fresnel — the form glows at glancing angles
-like a real reflective surface.
+v0.7.7 — fix "Metal makes it black".  v0.7.5 used Fresnel to damp
+diffuse for energy conservation, but without an environment map
+(no IBL) metals went nearly pitch-black: there was nothing to
+fill the diffuse void.  Now metals get:
+  - a 2.5× ambient boost so the base colour stays visible,
+  - a cheap hemisphere-gradient "fake env reflection" tinted by
+    the base — sky above, ground below,
+  - no Fresnel damping on diffuse (drop the
+    (1 - fresnel) factor that was the main culprit).
+Dielectrics are unchanged.
+
+v0.7.5 — Fresnel-Schlick edge term.
 
 v0.7.3 — set_mesh no longer auto-fits the camera every call.
 Previous behaviour: every parameter tweak rebuilt the mesh and
@@ -71,7 +78,7 @@ v0.4.0:
 """
 from __future__ import annotations
 
-__version__ = "0.7.5"
+__version__ = "0.7.7"
 
 import os
 import sys
@@ -273,14 +280,27 @@ void main() {
     // Specular colour = Fresnel response × highlight intensity.
     vec3 spec_color = fresnel * spec;
 
-    // Metals shed diffuse — most of their reflection is specular.
-    // Mix in (1 - fresnel) so high-Fresnel angles get less diffuse
-    // (energy conservation, loosely).
-    vec3 diffuse_color = mix(base, base * 0.10, m) * (vec3(1.0) - fresnel);
+    // Diffuse: metals shed most diffuse but not all (no IBL means
+    // we have nothing to fill the void if we kill it completely).
+    vec3 diffuse_color = mix(base, base * 0.20, m);
 
-    vec3 color = u_ambient * base
+    // Ambient + hemisphere fake-environment for metals.  Without an
+    // environment map a metal would render almost pitch-black under
+    // our single key light — there's nothing for it to reflect.
+    // Cheap fix: boost ambient and add a sky/ground gradient tinted
+    // by the base colour, both scaled by metalness.  Dielectrics
+    // get neither (their look is unchanged from v0.7.5).
+    vec3 sky    = vec3(0.85, 0.90, 1.00);
+    vec3 ground = vec3(0.25, 0.22, 0.18);
+    float hemi  = N.y * 0.5 + 0.5;
+    vec3 hemi_color = mix(ground, sky, hemi);
+    vec3 ambient_term = u_ambient * base * mix(1.0, 2.5, m);
+    vec3 env_term     = hemi_color * base * mix(0.0, 0.5, m);
+
+    vec3 color = ambient_term
                + wrap * diffuse_color
-               + spec_color;
+               + spec_color
+               + env_term;
     gl_FragColor = vec4(color, v_color.a);
 }
 """
