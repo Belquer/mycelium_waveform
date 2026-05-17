@@ -1,5 +1,5 @@
 """
-voice-to-form  —  src/gui/tab_geometry.py  v0.7.3
+voice-to-form  —  src/gui/tab_geometry.py  v0.7.4
 
 Design tab — geometry + appearance combined.
 
@@ -38,7 +38,7 @@ v0.6.0:
 """
 from __future__ import annotations
 
-__version__ = "0.7.3"
+__version__ = "0.7.4"
 
 import sys
 
@@ -329,8 +329,22 @@ class DesignTab(QWidget):
         # Sliders
         slider_form = QFormLayout()
         self.roughness = self._slider(cfg.appearance.roughness)
+        self.roughness.setToolTip(
+            "Specular sharpness.  0 = mirror-sharp highlight; "
+            "1 = matte, no highlight."
+        )
         self.metalness = self._slider(cfg.appearance.metalness)
+        self.metalness.setToolTip(
+            "Blends from painted (0) to metal (1).  At 0 the highlight "
+            "is white (paint / plastic).  At 1 the highlight takes the "
+            "base colour and the diffuse drops — polished metal of that "
+            "tint.  Pair with low roughness for a mirror, high roughness "
+            "for brushed metal."
+        )
         self.bump = self._slider(cfg.appearance.bump_intensity)
+        self.bump.setToolTip(
+            "Strength of the procedural surface relief picked below."
+        )
         slider_form.addRow("Roughness", self.roughness)
         slider_form.addRow("Metalness", self.metalness)
         slider_form.addRow("Bump", self.bump)
@@ -338,6 +352,17 @@ class DesignTab(QWidget):
         self.pattern_combo = QComboBox()
         self.pattern_combo.addItems(BUMP_PATTERNS)
         self.pattern_combo.setCurrentText(cfg.appearance.bump_pattern)
+        self.pattern_combo.setToolTip(
+            "Procedural noise applied to the surface normal:\n"
+            "  smooth         no relief\n"
+            "  sandblasted    high-freq random\n"
+            "  beadblasted    fine, rounder\n"
+            "  brushed        directional sine\n"
+            "  layered (FDM)  horizontal print lines\n"
+            "  porous (SLS)   large pits\n"
+            "  woven (carbon) crossing grid\n"
+            "  mycelium-colonized  organic fractal noise"
+        )
         self.pattern_combo.currentTextChanged.connect(self._pattern_changed)
         slider_form.addRow("Bump pattern", self.pattern_combo)
         outer.addLayout(slider_form)

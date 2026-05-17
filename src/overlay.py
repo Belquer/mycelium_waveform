@@ -1,5 +1,13 @@
 """
-voice-to-form  —  src/overlay.py  v0.1.0
+voice-to-form  —  src/overlay.py  v0.7.4
+
+Diagnostic overlay — three-stack figure for the Verify tab.
+
+v0.7.4 — the direct-overlay plot now normalizes the audio to the
+form's mm range (peak = max_r_mm).  Before, raw amplitude (~0.1–0.2
+for a typical recording) was plotted against the form envelope's
+40 mm scale, so the purple audio line was a barely-visible squiggle
+near zero.  Also bumped purple opacity / line width for readability.
 
 Diagnostic overlay — the three stacked plots that catch proportion
 errors before export.  Required by Part 4 of the spec; the Export tab
@@ -19,7 +27,7 @@ not as decoration.
 """
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.7.4"
 
 import sys
 from dataclasses import dataclass, field
@@ -92,11 +100,18 @@ def build_figure(
     fig = Figure(figsize=figsize, dpi=110)
     gs = fig.add_gridspec(3, 1, hspace=0.45)
 
+    # Scale the audio so its peaks align with the form envelopes — the
+    # form's max radius is max_r_mm when the envelope is 1.0, so audio's
+    # peak amplitude should also reach max_r_mm for the overlay to be
+    # readable.  Without this the audio shows up as a tiny squiggle near
+    # zero against ±40 mm envelopes.
+    audio_peak = float(max(np.abs(y).max(), 1e-9)) if y.size else 1.0
+    audio_scale = params.max_r_mm / audio_peak
+    audio_x = np.linspace(0.0, params.length_mm, num=len(y))
+    audio_scaled = y * audio_scale
+
     # --- Plot 1: audio waveform, x-scaled to form length ----------------
     ax1 = fig.add_subplot(gs[0])
-    audio_x = np.linspace(0.0, params.length_mm, num=len(y))
-    # Scale audio amplitude to match form's MAX_R for visual comparison.
-    audio_scaled = y * params.max_r_mm
     ax1.plot(audio_x, audio_scaled, color="#444", lw=0.5)
     ax1.axhline(0, color="#888", lw=0.4)
     ax1.set_title("audio waveform (amplitude → mm)", fontsize=10)
@@ -118,8 +133,8 @@ def build_figure(
 
     # --- Plot 3: direct overlay -----------------------------------------
     ax3 = fig.add_subplot(gs[2], sharex=ax1)
-    ax3.plot(audio_x, audio_scaled, color="#7a3aa8", lw=0.45, alpha=0.45,
-             label="audio (semi-transparent)")
+    ax3.plot(audio_x, audio_scaled, color="#5e2a8a", lw=0.7, alpha=0.6,
+             label="audio (normalised to form scale)")
     ax3.plot(xs, top_r_v_mm, color="#d33", lw=1.4, label="form top envelope")
     ax3.plot(xs, -bottom_r_v_mm, color="#d33", lw=1.4, label="form bottom envelope")
     ax3.axhline(0, color="#000", lw=0.4)
