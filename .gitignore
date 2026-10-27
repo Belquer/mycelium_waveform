@@ -20,3 +20,4 @@ library/*/
 # Examples may include large WAVs supplied by the user. Track sample only.
 examples/*.wav
 !examples/multitudes_sample.wav
+.claude/
